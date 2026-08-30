@@ -1,4 +1,15 @@
-<?php session_start(); ?>
+<?php
+session_start();
+require_once __DIR__ . '/app/Helpers/roles.php';
+
+// Es la configuración de la propia cuenta: sin sesión, no hay nada que configurar.
+if (empty($_SESSION['usuario_id'])) {
+    header('Location: login.php');
+    exit;
+}
+
+$puedeCrearTorneo = in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -174,7 +185,9 @@
   <footer class="footer">
     <div class="footer-links">
       <a href="como-funciona.php">Cómo funciona</a>
-      <a href="crear-torneo.php">Crear torneo</a>
+      <?php if ($puedeCrearTorneo): ?>
+        <a href="crear-torneo.php">Crear torneo</a>
+      <?php endif; ?>
       <a href="#">Términos</a>
       <a href="#">Privacidad</a>
     </div>

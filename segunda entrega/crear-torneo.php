@@ -1,4 +1,20 @@
-<?php session_start(); ?>
+<?php
+session_start();
+require_once __DIR__ . '/app/Helpers/roles.php';
+
+// Crear un torneo es una acción de Organizador o de Administrador general.
+// Un Participante (o alguien sin sesión) no debería ni ver este formulario.
+if (empty($_SESSION['usuario_id'])) {
+    header('Location: login.php');
+    exit;
+}
+
+$rolActual = (int) ($_SESSION['usuario_rol'] ?? 0);
+if (!in_array($rolActual, [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true)) {
+    header('Location: index.php');
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>

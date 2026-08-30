@@ -3106,13 +3106,16 @@ html.modo-oscuro {
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
-/* Aviso flotante temporal ("toast") para confirmar acciones del panel admin */
+/* Aviso flotante temporal ("toast") para confirmar acciones del panel admin.
+   El fondo es un color fijo (no sigue el tema claro/oscuro a propósito):
+   antes usaba var(--color-text), que en modo oscuro es casi blanco y
+   dejaba el texto blanco encima ilegible. */
 .toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%) translateY(10px);
-  background: var(--color-text);
+  background: #24262b;
   color: #fff;
   padding: 12px 20px;
   border-radius: var(--radius-md);

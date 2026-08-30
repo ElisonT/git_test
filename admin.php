@@ -1,10 +1,11 @@
 <?php
 session_start();
 require_once __DIR__ . '/app/Helpers/texto.php';
+require_once __DIR__ . '/app/Helpers/roles.php';
 
-// Solo el Administrador general (rol_id = 1) puede ver este panel.
+// Solo el Administrador general puede ver este panel.
 // Si no hay sesión, o la sesión es de otro rol, se lo manda para afuera.
-$esAdmin = !empty($_SESSION['usuario_id']) && (int) ($_SESSION['usuario_rol'] ?? 0) === 1;
+$esAdmin = !empty($_SESSION['usuario_id']) && (int) ($_SESSION['usuario_rol'] ?? 0) === ROL_ADMINISTRADOR;
 if (!$esAdmin) {
     header('Location: index.php');
     exit;

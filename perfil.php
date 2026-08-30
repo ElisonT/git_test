@@ -1,7 +1,9 @@
 <?php
 session_start();
 require_once __DIR__ . '/app/Models/Usuario.php';
+require_once __DIR__ . '/app/Controllers/UsuarioController.php';
 require_once __DIR__ . '/app/Helpers/texto.php';
+require_once __DIR__ . '/app/Helpers/roles.php';
 
 // Esta página muestra datos personales: si no hay sesión, no se puede entrar.
 if (empty($_SESSION['usuario_id'])) {
@@ -16,6 +18,68 @@ if (!$usuario) {
     header('Location: logout.php');
     exit;
 }
+
+$erroresEdicion = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $controlador = new UsuarioController();
+
+    // Puede venir el mini-formulario de la foto (se manda solo al elegir un archivo)...
+    if (isset($_FILES['foto'])) {
+        $erroresEdicion = array_merge(
+            $erroresEdicion,
+            $controlador->procesarFoto((int) $usuario['id'], $_FILES['foto'])
+        );
+    }
+
+    // ...o el formulario principal de "Editar perfil" (nombre, usuario, género).
+    if (isset($_POST['nombre'])) {
+        $erroresEdicion = array_merge(
+            $erroresEdicion,
+            $controlador->procesarEdicionPerfil((int) $usuario['id'], $_POST)
+        );
+    }
+
+    if (empty($erroresEdicion)) {
+        // Puede haber cambiado el nombre y/o la foto: se refresca todo de una
+        // y se actualiza la sesión, para que el nav se vea al día ya mismo.
+        $usuario = (new Usuario())->buscarPorId((int) $usuario['id']);
+        $_SESSION['usuario_nombre'] = $usuario['nombre_completo'];
+        $_SESSION['usuario_foto']   = $usuario['foto'];
+        header('Location: perfil.php?actualizado=1');
+        exit;
+    }
+
+    // Si algo falló y vino del formulario principal, mostramos lo que el
+    // usuario tipeó (no lo que sigue guardado en la base), para que no
+    // pierda lo escrito.
+    if (isset($_POST['nombre'])) {
+        $usuario['nombre_completo'] = $_POST['nombre']   ?? $usuario['nombre_completo'];
+        $usuario['nombre_usuario']  = $_POST['usuario']  ?? $usuario['nombre_usuario'];
+        $usuario['genero']          = $_POST['genero']   ?? $usuario['genero'];
+    }
+}
+
+$edicionExitosa = isset($_GET['actualizado']);
+
+$puedeCrearTorneo = in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
+
+// ---- Torneos reales del usuario (para las estadísticas y el carrusel) ----
+require_once __DIR__ . '/app/Models/Torneo.php';
+$modeloTorneo       = new Torneo();
+$torneosJugados     = $modeloTorneo->contarJugados((int) $usuario['id']);
+$torneosActivos     = $modeloTorneo->contarActivos((int) $usuario['id']);
+$torneosGanados     = $modeloTorneo->contarGanados((int) $usuario['id']);
+$porcentajeVictorias = $torneosJugados > 0 ? round(($torneosGanados / $torneosJugados) * 100) : 0;
+$torneosParticipando = $modeloTorneo->listarParticipando((int) $usuario['id']);
+
+// Mapeos para mostrar el formato/estado de cada torneo con textos y colores prolijos
+$etiquetasFormato = ['liga' => 'Liga', 'eliminacion' => 'Eliminación directa', 'suizo' => 'Sistema suizo'];
+$etiquetasEstado  = [
+    'inscripciones_abiertas' => ['texto' => 'Inscripciones abiertas', 'clase' => 'estado-verde'],
+    'en_curso'               => ['texto' => 'En curso',               'clase' => 'estado-naranja'],
+    'finalizado'             => ['texto' => 'Finalizado',             'clase' => 'estado-rojo'],
+];
 
 $iniciales = obtenerIniciales($usuario['nombre_completo']);
 
@@ -79,11 +143,15 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
 
       <!-- AVATAR: circulo con iniciales del usuario y opcion visual para foto. -->
       <div class="perfil-avatar-wrap">
-        <div class="perfil-avatar" id="perfilAvatarCirculo"><?= htmlspecialchars($iniciales) ?></div>
-        <label class="btn-foto" title="Cambiar foto" aria-label="Cambiar foto de perfil">
-          <i class="fa-solid fa-camera" aria-hidden="true"></i>
-          <input type="file" id="perfilFotoInput" name="avatar" accept="image/*" style="display:none;" />
-        </label>
+        <div class="perfil-avatar" id="perfilAvatarCirculo"<?php if (!empty($usuario['foto'])): ?> style="background-image:url('<?= htmlspecialchars($usuario['foto']) ?>'); background-size:cover; background-position:center;"<?php endif; ?>><?= empty($usuario['foto']) ? htmlspecialchars($iniciales) : '' ?></div>
+        <!-- Este mini-formulario se manda solo (ver script.js) apenas se elige un archivo,
+             sin esperar a que se toque "Guardar cambios" del formulario de abajo. -->
+        <form id="fotoPerfilForm" method="post" action="perfil.php" enctype="multipart/form-data" style="display:contents;">
+          <label class="btn-foto" title="Cambiar foto" aria-label="Cambiar foto de perfil">
+            <i class="fa-solid fa-camera" aria-hidden="true"></i>
+            <input type="file" id="perfilFotoInput" name="foto" accept="image/jpeg,image/png,image/webp" style="display:none;" />
+          </label>
+        </form>
       </div>
 
       <!-- INFO: datos principales del usuario mostrados en su perfil. -->
@@ -116,7 +184,26 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
       <div class="seccion-header">
         <h2 class="seccion-titulo"><i class="fa-solid fa-pen"></i> Editar perfil</h2>
       </div>
-      <form class="editar-form" id="editarPerfilForm">
+
+      <?php if ($edicionExitosa): ?>
+        <div class="form-alert form-alert-success" style="display:flex;">
+          <i class="fa-solid fa-circle-check"></i>
+          <span>Perfil actualizado correctamente.</span>
+        </div>
+      <?php endif; ?>
+
+      <?php if (!empty($erroresEdicion)): ?>
+        <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start;">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <ul style="margin:0; padding-left:1.1rem;">
+            <?php foreach ($erroresEdicion as $error): ?>
+              <li><?= htmlspecialchars($error) ?></li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
+      <?php endif; ?>
+
+      <form class="editar-form" id="editarPerfilForm" method="post" action="perfil.php">
         <div class="editar-fila">
           <div class="form-group">
             <label class="form-label-p" for="perfilNombreInput">Nombre completo</label>
@@ -167,19 +254,19 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
        ===================== -->
     <section class="perfil-stats">
       <div class="pstat">
-        <div class="pstat-num" data-target="8">8</div>
+        <div class="pstat-num" data-target="<?= $torneosJugados ?>"><?= $torneosJugados ?></div>
         <div class="pstat-label">Torneos jugados</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" data-target="3">3</div>
+        <div class="pstat-num" data-target="<?= $torneosActivos ?>"><?= $torneosActivos ?></div>
         <div class="pstat-label">Torneos activos</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" data-target="2">2</div>
+        <div class="pstat-num" data-target="<?= $torneosGanados ?>"><?= $torneosGanados ?></div>
         <div class="pstat-label">Torneos ganados</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" data-target="74" data-formato="%">74%</div>
+        <div class="pstat-num" data-target="<?= $porcentajeVictorias ?>" data-formato="%"><?= $porcentajeVictorias ?>%</div>
         <div class="pstat-label">Victorias</div>
       </div>
     </section>
@@ -193,50 +280,44 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
         <h2 class="seccion-titulo"><i class="fa-solid fa-trophy"></i> Torneos en los que participa</h2>
         <a href="busqueda.php" class="section-link">Ver todos <i class="fa-solid fa-arrow-right"></i></a>
       </div>
-      <div class="carrusel-wrap">
-        <button class="carrusel-flecha" data-carrusel-dir="-1" aria-label="Ver torneos anteriores">
-          <i class="fa-solid fa-chevron-left"></i>
-        </button>
-        <div class="tarjetas-carrusel">
+      <?php if (empty($torneosParticipando)): ?>
+        <p class="form-hint" style="margin-top:0.5rem;">
+          Todavía no estás anotado en ningún torneo.
+          <a href="busqueda.php">Buscá uno para sumarte</a>.
+        </p>
+      <?php else: ?>
+        <div class="carrusel-wrap">
+          <button class="carrusel-flecha" data-carrusel-dir="-1" aria-label="Ver torneos anteriores">
+            <i class="fa-solid fa-chevron-left"></i>
+          </button>
+          <div class="tarjetas-carrusel">
 
-          <div class="card">
-            <div class="card-sport"><i class="fa-solid fa-futbol"></i> Fútbol</div>
-            <div class="card-name">Mundialito 2026</div>
-            <div class="card-meta">
-              <div class="card-row"><i class="fa-solid fa-users"></i> 16 equipos</div>
-              <div class="card-row"><i class="fa-solid fa-calendar"></i> Inicia 15 jun</div>
-              <div class="card-row"><i class="fa-solid fa-chart-bar"></i> Liga</div>
-            </div>
-            <span class="badge estado-verde">Inscripciones abiertas</span>
+            <?php foreach ($torneosParticipando as $torneo):
+              $estadoInfo = $etiquetasEstado[$torneo['estado']] ?? $etiquetasEstado['inscripciones_abiertas'];
+              $fechaTexto = $torneo['fecha_inicio']
+                  ? (new DateTime($torneo['fecha_inicio']))->format('d/m/Y')
+                  : 'A confirmar';
+            ?>
+              <a href="detalle.php?id=<?= (int) $torneo['id'] ?>" class="card card-link">
+                <div class="card-sport" data-deporte="<?= htmlspecialchars($torneo['deporte']) ?>">
+                  <i class="fa-solid fa-trophy"></i> <?= htmlspecialchars($torneo['deporte']) ?>
+                </div>
+                <div class="card-name"><?= htmlspecialchars($torneo['nombre']) ?></div>
+                <div class="card-meta">
+                  <div class="card-row"><i class="fa-solid fa-users"></i> <?= (int) $torneo['cantidad_participantes'] ?> participantes</div>
+                  <div class="card-row"><i class="fa-solid fa-calendar"></i> <?= htmlspecialchars($fechaTexto) ?></div>
+                  <div class="card-row"><i class="fa-solid fa-chart-bar"></i> <?= htmlspecialchars($etiquetasFormato[$torneo['formato']] ?? $torneo['formato']) ?></div>
+                </div>
+                <span class="badge <?= $estadoInfo['clase'] ?>"><?= htmlspecialchars($estadoInfo['texto']) ?></span>
+              </a>
+            <?php endforeach; ?>
+
           </div>
-
-          <div class="card">
-            <div class="card-sport"><i class="fa-solid fa-chess"></i> Ajedrez</div>
-            <div class="card-name">Torneo de ajedrez</div>
-            <div class="card-meta">
-              <div class="card-row"><i class="fa-solid fa-users"></i> 128 participantes</div>
-              <div class="card-row"><i class="fa-solid fa-calendar"></i> En curso</div>
-              <div class="card-row"><i class="fa-solid fa-chart-bar"></i> Sistema suizo</div>
-            </div>
-            <span class="badge estado-naranja">En curso — ronda 3</span>
-          </div>
-
-          <div class="card">
-            <div class="card-sport"><i class="fa-solid fa-gamepad"></i> Videojuegos</div>
-            <div class="card-name">CS:2 Gaming Cup</div>
-            <div class="card-meta">
-              <div class="card-row"><i class="fa-solid fa-users"></i> 16 equipos</div>
-              <div class="card-row"><i class="fa-solid fa-calendar"></i> 20 jun</div>
-              <div class="card-row"><i class="fa-solid fa-chart-bar"></i> Eliminación directa</div>
-            </div>
-            <span class="badge estado-verde">Inscripciones abiertas</span>
-          </div>
-
+          <button class="carrusel-flecha" data-carrusel-dir="1" aria-label="Ver más torneos">
+            <i class="fa-solid fa-chevron-right"></i>
+          </button>
         </div>
-        <button class="carrusel-flecha" data-carrusel-dir="1" aria-label="Ver más torneos">
-          <i class="fa-solid fa-chevron-right"></i>
-        </button>
-      </div>
+      <?php endif; ?>
     </section>
 
     <!-- =====================
@@ -314,7 +395,9 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
   <footer class="footer">
     <div class="footer-links">
       <a href="como-funciona.php">Cómo funciona</a>
-      <a href="crear-torneo.php">Crear torneo</a>
+      <?php if ($puedeCrearTorneo): ?>
+        <a href="crear-torneo.php">Crear torneo</a>
+      <?php endif; ?>
       <a href="#">Términos</a>
       <a href="#">Privacidad</a>
     </div>

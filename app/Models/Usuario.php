@@ -83,6 +83,37 @@ class Usuario
         return $consulta->fetch();
     }
 
+    /** Para editar perfil: hay que ignorar el propio registro al chequear duplicados. */
+    public function nombreUsuarioExisteParaOtro(string $nombreUsuario, int $idPropio): bool
+    {
+        $consulta = $this->conexion->prepare(
+            'SELECT id FROM usuarios WHERE nombre_usuario = :nombre_usuario AND id != :id'
+        );
+        $consulta->execute(['nombre_usuario' => $nombreUsuario, 'id' => $idPropio]);
+        return (bool) $consulta->fetch();
+    }
+
+    public function actualizarPerfil(int $id, string $nombreCompleto, string $nombreUsuario, string $genero): bool
+    {
+        $consulta = $this->conexion->prepare(
+            'UPDATE usuarios
+                SET nombre_completo = :nombre_completo, nombre_usuario = :nombre_usuario, genero = :genero
+              WHERE id = :id'
+        );
+        return $consulta->execute([
+            'nombre_completo' => $nombreCompleto,
+            'nombre_usuario'  => $nombreUsuario,
+            'genero'          => $genero,
+            'id'              => $id,
+        ]);
+    }
+
+    public function actualizarFoto(int $id, string $rutaFoto): bool
+    {
+        $consulta = $this->conexion->prepare('UPDATE usuarios SET foto = :foto WHERE id = :id');
+        return $consulta->execute(['foto' => $rutaFoto, 'id' => $id]);
+    }
+
     public function verificarContrasena(string $contrasenaPlano, string $hashGuardado): bool
     {
         return password_verify($contrasenaPlano, $hashGuardado);

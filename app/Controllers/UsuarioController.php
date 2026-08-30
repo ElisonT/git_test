@@ -83,6 +83,97 @@ class UsuarioController
     }
 
     /**
+     * Procesa la subida de una nueva foto de perfil.
+     * @return string[] Lista de errores. Vacía si no hay nada que reportar
+     *                   (incluye el caso de "no se eligió ningún archivo").
+     */
+    public function procesarFoto(int $idUsuario, array $archivo): array
+    {
+        $errores = [];
+
+        // No es un error: el usuario puede guardar el resto del perfil sin cambiar la foto.
+        if (!isset($archivo['error']) || $archivo['error'] === UPLOAD_ERR_NO_FILE) {
+            return $errores;
+        }
+
+        if ($archivo['error'] !== UPLOAD_ERR_OK) {
+            $errores[] = 'Hubo un problema al subir la imagen. Probá de nuevo.';
+            return $errores;
+        }
+
+        $tamanioMaximo = 2 * 1024 * 1024; // 2 MB
+        if ($archivo['size'] > $tamanioMaximo) {
+            $errores[] = 'La foto no puede pesar más de 2 MB.';
+            return $errores;
+        }
+
+        // Se valida el contenido real del archivo, no solo la extensión del
+        // nombre (un .jpg falso podría en realidad ser otra cosa).
+        $tiposPermitidos = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/webp' => 'webp',
+        ];
+        $tipoReal = mime_content_type($archivo['tmp_name']);
+
+        if (!isset($tiposPermitidos[$tipoReal])) {
+            $errores[] = 'La foto tiene que ser JPG, PNG o WEBP.';
+            return $errores;
+        }
+
+        $extension       = $tiposPermitidos[$tipoReal];
+        $nombreArchivo   = 'usuario_' . $idUsuario . '_' . time() . '.' . $extension;
+        $carpetaDestino  = __DIR__ . '/../../uploads/avatars/';
+        $rutaCompleta    = $carpetaDestino . $nombreArchivo;
+
+        if (!move_uploaded_file($archivo['tmp_name'], $rutaCompleta)) {
+            $errores[] = 'No se pudo guardar la imagen en el servidor.';
+            return $errores;
+        }
+
+        // Se guarda solo la ruta relativa: la misma que después usa <img src="...">
+        $exito = $this->modeloUsuario->actualizarFoto($idUsuario, 'uploads/avatars/' . $nombreArchivo);
+        if (!$exito) {
+            $errores[] = 'La imagen se subió pero no se pudo asociar a tu perfil.';
+        }
+
+        return $errores;
+    }
+
+    /**
+     * Procesa el formulario de "Editar perfil".
+     * @return string[] Lista de errores. Vacía si se guardó bien.
+     */
+    public function procesarEdicionPerfil(int $idUsuario, array $datos): array
+    {
+        $errores = [];
+
+        $nombreUsuario  = trim($datos['usuario'] ?? '');
+        $nombreCompleto = trim($datos['nombre'] ?? '');
+        $genero         = $datos['genero'] ?? 'otro';
+
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $nombreUsuario)) {
+            $errores[] = 'El nombre de usuario solo puede tener letras, números y guion bajo.';
+        }
+        if ($nombreCompleto === '' || !str_contains(trim($nombreCompleto), ' ')) {
+            $errores[] = 'Ingresá tu nombre y apellido.';
+        }
+
+        if (empty($errores) && $this->modeloUsuario->nombreUsuarioExisteParaOtro($nombreUsuario, $idUsuario)) {
+            $errores[] = 'Ese nombre de usuario ya está en uso por otra cuenta.';
+        }
+
+        if (empty($errores)) {
+            $exito = $this->modeloUsuario->actualizarPerfil($idUsuario, $nombreCompleto, $nombreUsuario, $genero);
+            if (!$exito) {
+                $errores[] = 'No se pudo actualizar el perfil. Probá de nuevo.';
+            }
+        }
+
+        return $errores;
+    }
+
+    /**
      * Procesa el formulario de login.
      * @return string|null Mensaje de error, o null si el login fue exitoso.
      */
@@ -110,6 +201,7 @@ class UsuarioController
         $_SESSION['usuario_id']     = $usuario['id'];
         $_SESSION['usuario_nombre'] = $usuario['nombre_completo'];
         $_SESSION['usuario_rol']    = (int) $usuario['rol_id'];
+        $_SESSION['usuario_foto']   = $usuario['foto'];
 
         return null;
     }

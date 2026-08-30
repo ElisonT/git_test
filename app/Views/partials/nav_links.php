@@ -13,12 +13,18 @@
  */
 
 require_once __DIR__ . '/../../Helpers/texto.php';
+require_once __DIR__ . '/../../Helpers/roles.php';
 
 $haySesion = !empty($_SESSION['usuario_id']);
-$esAdmin   = $haySesion && (int) ($_SESSION['usuario_rol'] ?? 0) === 1;
+$esAdmin   = $haySesion && (int) ($_SESSION['usuario_rol'] ?? 0) === ROL_ADMINISTRADOR;
+$puedeCrearTorneo = $haySesion && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
 ?>
 <div class="nav-links" id="navLinks">
   <a href="busqueda.php"><i class="fa-solid fa-trophy nav-link-icon"></i>Torneos</a>
+
+  <?php if ($puedeCrearTorneo): ?>
+    <a href="crear-torneo.php"><i class="fa-solid fa-plus nav-link-icon"></i>Crear torneo</a>
+  <?php endif; ?>
 
   <?php if (!empty($mostrarComoFunciona)): ?>
     <a href="como-funciona.php"><i class="fa-solid fa-circle-info nav-link-icon"></i>Cómo funciona</a>
@@ -29,7 +35,11 @@ $esAdmin   = $haySesion && (int) ($_SESSION['usuario_rol'] ?? 0) === 1;
     <a href="register.php" class="btn-primary"><i class="fa-solid fa-user-plus nav-link-icon"></i>Registrarse</a>
   <?php else: ?>
     <a href="perfil.php" class="nav-avatar" title="Mi perfil">
-      <span class="nav-avatar-circle"><?= htmlspecialchars(obtenerIniciales($_SESSION['usuario_nombre'] ?? '')) ?></span>
+      <?php if (!empty($_SESSION['usuario_foto'])): ?>
+        <span class="nav-avatar-circle" style="background-image:url('<?= htmlspecialchars($_SESSION['usuario_foto']) ?>'); background-size:cover; background-position:center;"></span>
+      <?php else: ?>
+        <span class="nav-avatar-circle"><?= htmlspecialchars(obtenerIniciales($_SESSION['usuario_nombre'] ?? '')) ?></span>
+      <?php endif; ?>
       <span class="nav-link-label">Mi perfil</span>
     </a>
 

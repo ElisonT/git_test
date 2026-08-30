@@ -1,4 +1,10 @@
-<?php session_start(); ?>
+<?php
+session_start();
+require_once __DIR__ . '/app/Helpers/roles.php';
+
+$puedeCrearTorneo = !empty($_SESSION['usuario_id'])
+    && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -43,7 +49,11 @@
     <p>Torneos deportivos, mentales y electrónicos. Liga, eliminación directa o sistema suizo.</p>
     <div class="hero-actions">
       <a href="busqueda.php" class="btn-primary btn-lg">Explorar torneos</a>
-      <a href="crear-torneo.php" class="btn btn-lg">Crear torneo</a>
+      <?php if ($puedeCrearTorneo): ?>
+        <a href="crear-torneo.php" class="btn btn-lg">Crear torneo</a>
+      <?php else: ?>
+        <a href="busqueda.php" class="btn btn-lg">Unirse a torneos</a>
+      <?php endif; ?>
     </div>
   </section>
 
@@ -312,7 +322,9 @@
   <footer class="footer">
     <div class="footer-links">
       <a href="como-funciona.php">Cómo funciona</a>
-      <a href="crear-torneo.php">Crear torneo</a>
+      <?php if ($puedeCrearTorneo): ?>
+        <a href="crear-torneo.php">Crear torneo</a>
+      <?php endif; ?>
       <a href="#">Términos</a>
       <a href="#">Privacidad</a>
     </div>

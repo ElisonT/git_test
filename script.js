@@ -1110,20 +1110,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const editarPerfilForm = document.querySelector('#editarPerfilForm');
   if (editarPerfilForm) {
     editarPerfilForm.addEventListener('submit', (evento) => {
-      evento.preventDefault();
       if (!editarPerfilForm.checkValidity()) {
+        evento.preventDefault();
         editarPerfilForm.reportValidity();
-        return;
       }
-      // TODO (cuando esté el backend PHP): enviar estos datos con fetch()/FormData
-      // a un endpoint que actualice el perfil del usuario en la base de datos.
-      mostrarToast('Perfil actualizado. (Conexión con el servidor pendiente)');
+      // Si es válido, no llamamos a preventDefault: se manda solo a perfil.php,
+      // que ya sabe guardar los cambios en la base de datos.
     });
   }
 
-  // Vista previa de la foto de perfil elegida (solo visual, todavía no se sube a ningún lado)
+  // Vista previa de la foto de perfil elegida, y envío automático al formulario
+  // dedicado (fotoPerfilForm) para que quede guardada sin tocar "Guardar cambios".
   const perfilFotoInput = document.querySelector('#perfilFotoInput');
   const perfilAvatarCirculo = document.querySelector('#perfilAvatarCirculo');
+  const fotoPerfilForm = document.querySelector('#fotoPerfilForm');
   if (perfilFotoInput && perfilAvatarCirculo) {
     perfilFotoInput.addEventListener('change', () => {
       const archivo = perfilFotoInput.files[0];
@@ -1137,6 +1137,8 @@ document.addEventListener('DOMContentLoaded', () => {
         perfilAvatarCirculo.textContent = ''; // ocultamos las iniciales mientras se ve la foto
       };
       lector.readAsDataURL(archivo);
+
+      if (fotoPerfilForm) fotoPerfilForm.submit();
     });
   }
 

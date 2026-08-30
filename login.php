@@ -10,7 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($errorLogin === null) {
         // Login exitoso: la sesión ya quedó armada dentro del controlador.
-        header('Location: perfil.php');
+        header('Location: index.php');
         exit;
     }
 }
