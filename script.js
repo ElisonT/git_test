@@ -760,6 +760,37 @@ document.addEventListener('DOMContentLoaded', () => {
     return valido;
   }
 
+  // ===== MODAL DE CONFIGURACIÓN (perfil.php) =====
+  const modalConfiguracion = document.querySelector('#modalConfiguracion');
+  const btnAbrirConfiguracion = document.querySelector('#btnAbrirConfiguracion');
+  const btnCerrarConfiguracion = document.querySelector('#btnCerrarConfiguracion');
+
+  if (modalConfiguracion) {
+    function abrirModalConfiguracion() {
+      modalConfiguracion.style.display = 'flex';
+    }
+    function cerrarModalConfiguracion() {
+      modalConfiguracion.style.display = 'none';
+    }
+
+    if (btnAbrirConfiguracion) {
+      btnAbrirConfiguracion.addEventListener('click', abrirModalConfiguracion);
+    }
+    if (btnCerrarConfiguracion) {
+      btnCerrarConfiguracion.addEventListener('click', cerrarModalConfiguracion);
+    }
+    // Cerrar clickeando afuera del panel (sobre el fondo oscuro)
+    modalConfiguracion.addEventListener('click', (evento) => {
+      if (evento.target === modalConfiguracion) cerrarModalConfiguracion();
+    });
+    // Cerrar con la tecla Escape
+    document.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Escape' && modalConfiguracion.style.display === 'flex') {
+        cerrarModalConfiguracion();
+      }
+    });
+  }
+
   // ---- Formulario de login ----
   const loginForm = document.querySelector('#loginForm');
   if (loginForm) {

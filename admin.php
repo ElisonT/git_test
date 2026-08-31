@@ -20,6 +20,16 @@ $inicialesAdmin  = obtenerIniciales($nombreAdmin);
   <!-- HEAD: contiene informacion para el navegador; no se muestra como contenido principal de la pagina. -->
   <!-- charset define la codificacion para que tildes y eñes se lean correctamente. -->
   <meta charset="UTF-8" />
+  <script>
+    // Aplica el modo oscuro ANTES de que se pinte la página, para evitar el
+    // destello blanco al cargar/cambiar de página (si no, se ve un instante
+    // en claro y recién después salta a oscuro).
+    (function () {
+      if (localStorage.getItem('sgdm-tema') === 'oscuro') {
+        document.documentElement.classList.add('modo-oscuro');
+      }
+    })();
+  </script>
   <!-- viewport adapta el ancho de la pagina a celulares, tablets y PC. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- title es el texto que aparece en la pestaña del navegador. -->
@@ -69,7 +79,7 @@ $inicialesAdmin  = obtenerIniciales($nombreAdmin);
       <a href="#modulos" class="admin-nav-link">
         <i class="fa-solid fa-puzzle-piece"></i> Módulos
       </a>
-      <a href="configuracion.php" class="admin-nav-link">
+      <a href="#configuracion" class="admin-nav-link">
         <i class="fa-solid fa-gear"></i> Configuración
       </a>
     </nav>
@@ -238,7 +248,7 @@ $inicialesAdmin  = obtenerIniciales($nombreAdmin);
       <section class="admin-card" id="torneos" data-view="dashboard torneos">
         <div class="seccion-header">
           <h2 class="seccion-titulo"><i class="fa-solid fa-trophy"></i> Torneos recientes</h2>
-          <a href="#torneos" class="section-link">Ver todos <i class="fa-solid fa-arrow-right"></i></a>
+          <a href="asignar-organizador.php" class="section-link"><i class="fa-solid fa-user-tie"></i> Asignar organizador</a>
         </div>
         <div class="admin-tabla">
           <div class="admin-tabla-header admin-tabla-header-torneos">
@@ -379,7 +389,7 @@ $inicialesAdmin  = obtenerIniciales($nombreAdmin);
           <i class="fa-solid fa-flag admin-acceso-icon"></i>
           <span>Ver reportes</span>
         </a>
-        <a href="configuracion.php" class="admin-acceso">
+        <a href="#configuracion" class="admin-acceso">
           <i class="fa-solid fa-gear admin-acceso-icon"></i>
           <span>Configuración</span>
         </a>

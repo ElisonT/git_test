@@ -174,6 +174,106 @@ class UsuarioController
     }
 
     /**
+     * Procesa el formulario de "Datos de contacto" (correo y celular).
+     * @return string[] Lista de errores. Vacía si se guardó bien.
+     */
+    public function procesarContacto(int $idUsuario, array $datos): array
+    {
+        $errores = [];
+
+        $email   = trim($datos['correo'] ?? '');
+        $celular = trim($datos['celular'] ?? '');
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errores[] = 'El correo electrónico no es válido.';
+        }
+        if ($celular !== '' && !preg_match('/^[0-9+\s]+$/', $celular)) {
+            $errores[] = 'El celular solo puede tener números, espacios y "+".';
+        }
+
+        if (empty($errores) && $this->modeloUsuario->emailExisteParaOtro($email, $idUsuario)) {
+            $errores[] = 'Ya existe otra cuenta con ese correo.';
+        }
+
+        if (empty($errores)) {
+            $exito = $this->modeloUsuario->actualizarContacto($idUsuario, $email, $celular);
+            if (!$exito) {
+                $errores[] = 'No se pudieron guardar los datos de contacto. Probá de nuevo.';
+            }
+        }
+
+        return $errores;
+    }
+
+    /**
+     * Procesa el formulario de "Cambiar contraseña".
+     * @return string[] Lista de errores. Vacía si se guardó bien.
+     */
+    public function procesarCambioContrasena(int $idUsuario, array $datos): array
+    {
+        $errores = [];
+
+        $actual      = $datos['pass_actual']    ?? '';
+        $nueva       = $datos['pass_nueva']     ?? '';
+        $confirmar   = $datos['pass_confirmar'] ?? '';
+
+        $usuario = $this->modeloUsuario->buscarPorId($idUsuario);
+        if (!$usuario || !$this->modeloUsuario->verificarContrasena($actual, $usuario['contrasena_hash'])) {
+            $errores[] = 'La contraseña actual no es correcta.';
+        }
+
+        if (!preg_match('/^(?=.*[A-Z])(?=.*[0-9]).{8,}$/', $nueva)) {
+            $errores[] = 'La nueva contraseña debe tener al menos 8 caracteres, una mayúscula y un número.';
+        }
+        if ($nueva !== $confirmar) {
+            $errores[] = 'Las contraseñas nuevas no coinciden.';
+        }
+
+        if (empty($errores)) {
+            $exito = $this->modeloUsuario->actualizarContrasena($idUsuario, $nueva);
+            if (!$exito) {
+                $errores[] = 'No se pudo cambiar la contraseña. Probá de nuevo.';
+            }
+        }
+
+        return $errores;
+    }
+
+    /**
+     * Procesa la eliminación de cuenta. Pide la contraseña actual como
+     * confirmación (para que no baste con haber dejado la sesión abierta).
+     * No borra la fila: la anonimiza (ver Usuario::anonimizarCuenta), para
+     * no romper el historial de torneos que otras personas puedan compartir
+     * con este usuario (como organizador o como ganador).
+     * @return string[] Lista de errores. Vacía si se eliminó la cuenta.
+     */
+    public function procesarEliminacionCuenta(int $idUsuario, string $contrasenaActual): array
+    {
+        $errores = [];
+
+        $usuario = $this->modeloUsuario->buscarPorId($idUsuario);
+        if (!$usuario || !$this->modeloUsuario->verificarContrasena($contrasenaActual, $usuario['contrasena_hash'])) {
+            $errores[] = 'La contraseña ingresada no es correcta.';
+            return $errores;
+        }
+
+        // Se borra el archivo de la foto real del servidor antes de limpiar
+        // la columna (una vez anonimizada la fila, ya no tendríamos la ruta).
+        if (!empty($usuario['foto'])) {
+            $rutaFoto = __DIR__ . '/../../' . $usuario['foto'];
+            if (is_file($rutaFoto)) {
+                @unlink($rutaFoto);
+            }
+        }
+
+        if (!$this->modeloUsuario->anonimizarCuenta($idUsuario)) {
+            $errores[] = 'No se pudo eliminar la cuenta. Probá de nuevo.';
+        }
+
+        return $errores;
+    }
+
+    /**
      * Procesa el formulario de login.
      * @return string|null Mensaje de error, o null si el login fue exitoso.
      */

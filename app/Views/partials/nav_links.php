@@ -17,13 +17,18 @@ require_once __DIR__ . '/../../Helpers/roles.php';
 
 $haySesion = !empty($_SESSION['usuario_id']);
 $esAdmin   = $haySesion && (int) ($_SESSION['usuario_rol'] ?? 0) === ROL_ADMINISTRADOR;
-$puedeCrearTorneo = $haySesion && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
+$esOrganizador = $haySesion && (int) ($_SESSION['usuario_rol'] ?? 0) === ROL_ORGANIZADOR;
+$puedeCrearTorneo = $haySesion && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR], true);
 ?>
 <div class="nav-links" id="navLinks">
   <a href="busqueda.php"><i class="fa-solid fa-trophy nav-link-icon"></i>Torneos</a>
 
   <?php if ($puedeCrearTorneo): ?>
     <a href="crear-torneo.php"><i class="fa-solid fa-plus nav-link-icon"></i>Crear torneo</a>
+  <?php endif; ?>
+
+  <?php if ($esOrganizador): ?>
+    <a href="mis-torneos.php"><i class="fa-solid fa-user-tie nav-link-icon"></i>Torneos que organizo</a>
   <?php endif; ?>
 
   <?php if (!empty($mostrarComoFunciona)): ?>

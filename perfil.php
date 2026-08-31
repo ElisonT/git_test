@@ -19,50 +19,89 @@ if (!$usuario) {
     exit;
 }
 
-$erroresEdicion = [];
+$erroresEdicion  = [];
+$erroresContacto = [];
+$erroresPassword = [];
+$erroresEliminar = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $controlador = new UsuarioController();
 
-    // Puede venir el mini-formulario de la foto (se manda solo al elegir un archivo)...
-    if (isset($_FILES['foto'])) {
-        $erroresEdicion = array_merge(
-            $erroresEdicion,
-            $controlador->procesarFoto((int) $usuario['id'], $_FILES['foto'])
-        );
-    }
+    // Antes que nada: ¿es un pedido de eliminar la cuenta? Si sale bien, la
+    // cuenta deja de existir, así que no tiene sentido seguir procesando nada más.
+    if (isset($_POST['pass_eliminar'])) {
+        $erroresEliminar = $controlador->procesarEliminacionCuenta((int) $usuario['id'], $_POST['pass_eliminar']);
 
-    // ...o el formulario principal de "Editar perfil" (nombre, usuario, género).
-    if (isset($_POST['nombre'])) {
-        $erroresEdicion = array_merge(
-            $erroresEdicion,
-            $controlador->procesarEdicionPerfil((int) $usuario['id'], $_POST)
-        );
-    }
+        if (empty($erroresEliminar)) {
+            session_unset();
+            session_destroy();
+            header('Location: index.php?cuenta_eliminada=1');
+            exit;
+        }
+    } else {
+        // El mini-formulario de la foto (se manda solo al elegir un archivo)...
+        if (isset($_FILES['foto'])) {
+            $erroresEdicion = array_merge(
+                $erroresEdicion,
+                $controlador->procesarFoto((int) $usuario['id'], $_FILES['foto'])
+            );
+        }
 
-    if (empty($erroresEdicion)) {
-        // Puede haber cambiado el nombre y/o la foto: se refresca todo de una
-        // y se actualiza la sesión, para que el nav se vea al día ya mismo.
-        $usuario = (new Usuario())->buscarPorId((int) $usuario['id']);
-        $_SESSION['usuario_nombre'] = $usuario['nombre_completo'];
-        $_SESSION['usuario_foto']   = $usuario['foto'];
-        header('Location: perfil.php?actualizado=1');
-        exit;
-    }
+        // ...el formulario principal de "Editar perfil" (nombre, usuario, género)...
+        if (isset($_POST['nombre'])) {
+            $erroresEdicion = array_merge(
+                $erroresEdicion,
+                $controlador->procesarEdicionPerfil((int) $usuario['id'], $_POST)
+            );
+        }
 
-    // Si algo falló y vino del formulario principal, mostramos lo que el
-    // usuario tipeó (no lo que sigue guardado en la base), para que no
-    // pierda lo escrito.
-    if (isset($_POST['nombre'])) {
-        $usuario['nombre_completo'] = $_POST['nombre']   ?? $usuario['nombre_completo'];
-        $usuario['nombre_usuario']  = $_POST['usuario']  ?? $usuario['nombre_usuario'];
-        $usuario['genero']          = $_POST['genero']   ?? $usuario['genero'];
+        // ...los datos de contacto (correo, celular)...
+        if (isset($_POST['correo'])) {
+            $erroresContacto = $controlador->procesarContacto((int) $usuario['id'], $_POST);
+        }
+
+        // ...o el cambio de contraseña.
+        if (isset($_POST['pass_actual'])) {
+            $erroresPassword = $controlador->procesarCambioContrasena((int) $usuario['id'], $_POST);
+        }
+
+        $huboError = !empty($erroresEdicion) || !empty($erroresContacto) || !empty($erroresPassword);
+
+        if (!$huboError) {
+            // Puede haber cambiado el nombre, la foto, el contacto o la
+            // contraseña: se refresca todo de una y se actualiza la sesión,
+            // para que el nav se vea al día ya mismo.
+            $usuario = (new Usuario())->buscarPorId((int) $usuario['id']);
+            $_SESSION['usuario_nombre'] = $usuario['nombre_completo'];
+            $_SESSION['usuario_foto']   = $usuario['foto'];
+
+            $vieneDelModal = isset($_POST['correo']) || isset($_POST['pass_actual']);
+            $destino = 'perfil.php?actualizado=1' . ($vieneDelModal ? '&panel=config' : '');
+            header('Location: ' . $destino);
+            exit;
+        }
+
+        // Si algo falló y vino del formulario principal, mostramos lo que el
+        // usuario tipeó (no lo que sigue guardado en la base), para que no
+        // pierda lo escrito.
+        if (isset($_POST['nombre'])) {
+            $usuario['nombre_completo'] = $_POST['nombre']   ?? $usuario['nombre_completo'];
+            $usuario['nombre_usuario']  = $_POST['usuario']  ?? $usuario['nombre_usuario'];
+            $usuario['genero']          = $_POST['genero']   ?? $usuario['genero'];
+        }
+        if (isset($_POST['correo'])) {
+            $usuario['email']   = $_POST['correo']  ?? $usuario['email'];
+            $usuario['celular'] = $_POST['celular'] ?? $usuario['celular'];
+        }
     }
 }
 
 $edicionExitosa = isset($_GET['actualizado']);
 
-$puedeCrearTorneo = in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true);
+$abrirModalConfiguracion = !empty($erroresContacto) || !empty($erroresPassword) || !empty($erroresEliminar)
+    || isset($_GET['panel']);
+
+$puedeCrearTorneo = in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR], true);
 
 // ---- Torneos reales del usuario (para las estadísticas y el carrusel) ----
 require_once __DIR__ . '/app/Models/Torneo.php';
@@ -103,6 +142,16 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
   <!-- HEAD: contiene informacion para el navegador; no se muestra como contenido principal de la pagina. -->
   <!-- charset define la codificacion para que tildes y eñes se lean correctamente. -->
   <meta charset="UTF-8" />
+  <script>
+    // Aplica el modo oscuro ANTES de que se pinte la página, para evitar el
+    // destello blanco al cargar/cambiar de página (si no, se ve un instante
+    // en claro y recién después salta a oscuro).
+    (function () {
+      if (localStorage.getItem('sgdm-tema') === 'oscuro') {
+        document.documentElement.classList.add('modo-oscuro');
+      }
+    })();
+  </script>
   <!-- viewport adapta el ancho de la pagina a celulares, tablets y PC. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- title es el texto que aparece en la pestaña del navegador. -->
@@ -172,9 +221,9 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
         <a href="#editar-perfil" class="btn btn-editar">
           <i class="fa-solid fa-pen"></i> Editar perfil
         </a>
-        <a href="configuracion.php" class="btn btn-editar">
+        <button type="button" class="btn btn-editar" id="btnAbrirConfiguracion">
           <i class="fa-solid fa-gear"></i> Configuración
-        </a>
+        </button>
       </div>
 
     </section>
@@ -388,6 +437,160 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
 
       </div>
     </section>
+
+    <!-- =====================
+         MODAL DE CONFIGURACIÓN: se abre encima de esta misma página,
+         no navega a otro lado (ver script.js para el toggle).
+         ===================== -->
+    <div class="modal-overlay" id="modalConfiguracion" style="display:<?= $abrirModalConfiguracion ? 'flex' : 'none' ?>;">
+      <div class="modal-panel">
+        <div class="modal-panel-header">
+          <h2><i class="fa-solid fa-gear"></i> Configuración de cuenta</h2>
+          <button type="button" class="modal-cerrar" id="btnCerrarConfiguracion" aria-label="Cerrar">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="modal-panel-body">
+
+          <?php if ($edicionExitosa && isset($_GET['panel'])): ?>
+            <div class="form-alert form-alert-success" style="display:flex;">
+              <i class="fa-solid fa-circle-check"></i>
+              <span>Cambios guardados correctamente.</span>
+            </div>
+          <?php endif; ?>
+
+          <!-- DATOS DE CONTACTO -->
+          <section class="perfil-seccion">
+            <div class="seccion-header">
+              <h2 class="seccion-titulo"><i class="fa-solid fa-address-card"></i> Datos de contacto</h2>
+            </div>
+
+            <?php if (!empty($erroresContacto)): ?>
+              <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start;">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <ul style="margin:0; padding-left:1.1rem;">
+                  <?php foreach ($erroresContacto as $error): ?>
+                    <li><?= htmlspecialchars($error) ?></li>
+                  <?php endforeach; ?>
+                </ul>
+              </div>
+            <?php endif; ?>
+
+            <form class="editar-form" method="post" action="perfil.php">
+              <div class="editar-fila">
+                <div class="form-group">
+                  <label class="form-label-p" for="correo">Correo electrónico</label>
+                  <input
+                    type="email" id="correo" name="correo" class="form-input-p"
+                    value="<?= htmlspecialchars($usuario['email']) ?>"
+                    placeholder="ejemplo@correo.com" required
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label-p" for="celular">Número de celular</label>
+                  <input
+                    type="tel" id="celular" name="celular" class="form-input-p"
+                    value="<?= htmlspecialchars($usuario['celular'] ?? '') ?>"
+                    placeholder="+598 09X XXX XXX" pattern="[0-9+\s]+" title="Solo números, sin letras"
+                  />
+                </div>
+              </div>
+              <div class="config-aviso">
+                <i class="fa-solid fa-circle-info"></i>
+                Tu correo y celular son datos privados, no se muestran públicamente.
+              </div>
+              <div class="editar-acciones">
+                <button type="submit" class="btn-primary">Guardar cambios</button>
+              </div>
+            </form>
+          </section>
+
+          <!-- CAMBIAR CONTRASEÑA -->
+          <section class="perfil-seccion">
+            <div class="seccion-header">
+              <h2 class="seccion-titulo"><i class="fa-solid fa-key"></i> Cambiar contraseña</h2>
+            </div>
+
+            <?php if (!empty($erroresPassword)): ?>
+              <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start;">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <ul style="margin:0; padding-left:1.1rem;">
+                  <?php foreach ($erroresPassword as $error): ?>
+                    <li><?= htmlspecialchars($error) ?></li>
+                  <?php endforeach; ?>
+                </ul>
+              </div>
+            <?php endif; ?>
+
+            <form class="editar-form" method="post" action="perfil.php">
+              <div class="form-group">
+                <label class="form-label-p" for="pass-actual">Contraseña actual</label>
+                <input type="password" id="pass-actual" name="pass_actual" class="form-input-p" placeholder="Tu contraseña actual" required />
+              </div>
+              <div class="editar-fila">
+                <div class="form-group">
+                  <label class="form-label-p" for="pass-nueva">Nueva contraseña</label>
+                  <input
+                    type="password" id="pass-nueva" name="pass_nueva" class="form-input-p"
+                    placeholder="Mínimo 8 caracteres" minlength="8"
+                    pattern="(?=.*[A-Z])(?=.*[0-9]).{8,}"
+                    title="Mínimo 8 caracteres, una mayúscula y un número" required
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label-p" for="pass-confirmar">Confirmar nueva contraseña</label>
+                  <input type="password" id="pass-confirmar" name="pass_confirmar" class="form-input-p" placeholder="Repetí la nueva contraseña" minlength="8" required />
+                </div>
+              </div>
+              <span class="form-hint-p" style="padding-left: 4px;">
+                <i class="fa-solid fa-circle-info"></i>
+                La contraseña debe tener al menos 8 caracteres, una mayúscula y un número.
+              </span>
+              <div class="editar-acciones">
+                <button type="submit" class="btn-primary">Cambiar contraseña</button>
+              </div>
+            </form>
+          </section>
+
+          <!-- ZONA DE PELIGRO -->
+          <section class="perfil-seccion config-peligro">
+            <div class="seccion-header">
+              <h2 class="seccion-titulo seccion-titulo-rojo">
+                <i class="fa-solid fa-triangle-exclamation"></i> Zona de peligro
+              </h2>
+            </div>
+
+            <?php if (!empty($erroresEliminar)): ?>
+              <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start;">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <ul style="margin:0; padding-left:1.1rem;">
+                  <?php foreach ($erroresEliminar as $error): ?>
+                    <li><?= htmlspecialchars($error) ?></li>
+                  <?php endforeach; ?>
+                </ul>
+              </div>
+            <?php endif; ?>
+
+            <form method="post" action="perfil.php" onsubmit="return confirm('¿Seguro que querés eliminar tu cuenta? Esta acción no se puede deshacer.');">
+              <div class="peligro-contenido">
+                <div class="peligro-info">
+                  <p class="peligro-titulo">Eliminar cuenta</p>
+                  <p class="peligro-desc">Esta acción es permanente y no se puede deshacer. Se borran tu nombre, correo, celular y foto; ya no vas a poder iniciar sesión. Si organizaste o ganaste algún torneo, esos registros quedan como "Usuario eliminado" en vez de desaparecer.</p>
+                  <div class="form-group" style="margin-top:10px; max-width:280px;">
+                    <label class="form-label-p" for="pass-eliminar">Confirmá tu contraseña</label>
+                    <input type="password" id="pass-eliminar" name="pass_eliminar" class="form-input-p" required />
+                  </div>
+                </div>
+                <button type="submit" class="btn-danger">
+                  <i class="fa-solid fa-trash"></i> Eliminar mi cuenta
+                </button>
+              </div>
+            </form>
+          </section>
+
+        </div>
+      </div>
+    </div>
 
   </main>
 

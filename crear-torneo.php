@@ -2,15 +2,16 @@
 session_start();
 require_once __DIR__ . '/app/Helpers/roles.php';
 
-// Crear un torneo es una acción de Organizador o de Administrador general.
-// Un Participante (o alguien sin sesión) no debería ni ver este formulario.
+// Según la letra (5.1 y 5.2): el Administrador general CREA los torneos.
+// Al Organizador se le ASIGNA un torneo ya creado para que lo gestione,
+// pero no puede crear uno nuevo desde cero.
 if (empty($_SESSION['usuario_id'])) {
     header('Location: login.php');
     exit;
 }
 
 $rolActual = (int) ($_SESSION['usuario_rol'] ?? 0);
-if (!in_array($rolActual, [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true)) {
+if ($rolActual !== ROL_ADMINISTRADOR) {
     header('Location: index.php');
     exit;
 }
@@ -21,6 +22,16 @@ if (!in_array($rolActual, [ROL_ADMINISTRADOR, ROL_ORGANIZADOR], true)) {
   <!-- HEAD: contiene informacion para el navegador; no se muestra como contenido principal de la pagina. -->
   <!-- charset define la codificacion para que tildes y eñes se lean correctamente. -->
   <meta charset="UTF-8" />
+  <script>
+    // Aplica el modo oscuro ANTES de que se pinte la página, para evitar el
+    // destello blanco al cargar/cambiar de página (si no, se ve un instante
+    // en claro y recién después salta a oscuro).
+    (function () {
+      if (localStorage.getItem('sgdm-tema') === 'oscuro') {
+        document.documentElement.classList.add('modo-oscuro');
+      }
+    })();
+  </script>
   <!-- viewport adapta el ancho de la pagina a celulares, tablets y PC. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- title es el texto que aparece en la pestaña del navegador. -->

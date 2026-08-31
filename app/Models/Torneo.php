@@ -54,6 +54,45 @@ class Torneo
         return (int) $consulta->fetch()['total'];
     }
 
+    /** Se usa para bloquear la eliminación de cuenta: no tiene sentido borrar
+     *  a alguien que organiza torneos en los que otras personas participan. */
+    public function contarCreados(int $usuarioId): int
+    {
+        $consulta = $this->conexion->prepare(
+            'SELECT COUNT(*) AS total FROM torneos WHERE creado_por = :usuario_id'
+        );
+        $consulta->execute(['usuario_id' => $usuarioId]);
+        return (int) $consulta->fetch()['total'];
+    }
+
+    /**
+     * El Administrador general crea el torneo; después se lo puede ASIGNAR
+     * a un Organizador para que lo gestione (ver letra, puntos 5.1 y 5.2).
+     * $organizadorId puede ser null para "sin asignar todavía".
+     */
+    public function asignarOrganizador(int $torneoId, ?int $organizadorId): bool
+    {
+        $consulta = $this->conexion->prepare(
+            'UPDATE torneos SET organizador_asignado_id = :organizador WHERE id = :torneo'
+        );
+        return $consulta->execute(['organizador' => $organizadorId, 'torneo' => $torneoId]);
+    }
+
+    /** Lista todos los torneos con el nombre de quién lo creó y quién lo gestiona (para el admin). */
+    public function listarTodos(): array
+    {
+        $consulta = $this->conexion->query(
+            "SELECT t.*,
+                    creador.nombre_completo     AS nombre_creador,
+                    organizador.nombre_completo AS nombre_organizador
+               FROM torneos t
+               JOIN usuarios creador      ON creador.id = t.creado_por
+          LEFT JOIN usuarios organizador  ON organizador.id = t.organizador_asignado_id
+              ORDER BY t.fecha_creacion DESC"
+        );
+        return $consulta->fetchAll();
+    }
+
     /**
      * Torneos en los que participa un usuario (para el carrusel del perfil).
      * Incluye la cantidad de inscriptos de cada torneo con una subconsulta.
@@ -72,6 +111,20 @@ class Torneo
         $consulta->bindValue('usuario_id', $usuarioId, PDO::PARAM_INT);
         $consulta->bindValue('limite', $limite, PDO::PARAM_INT);
         $consulta->execute();
+        return $consulta->fetchAll();
+    }
+
+    /** Torneos que un Organizador tiene asignados para gestionar (ver letra 5.2). */
+    public function listarAsignados(int $organizadorId): array
+    {
+        $consulta = $this->conexion->prepare(
+            "SELECT t.*,
+                    (SELECT COUNT(*) FROM inscripciones i2 WHERE i2.torneo_id = t.id) AS cantidad_participantes
+               FROM torneos t
+              WHERE t.organizador_asignado_id = :organizador_id
+              ORDER BY t.fecha_inicio ASC"
+        );
+        $consulta->execute(['organizador_id' => $organizadorId]);
         return $consulta->fetchAll();
     }
 }
