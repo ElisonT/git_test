@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/app/Helpers/roles.php';
+require_once __DIR__ . '/app/Controllers/TorneoController.php';
 
 // Según la letra (5.1 y 5.2): el Administrador general CREA los torneos.
 // Al Organizador se le ASIGNA un torneo ya creado para que lo gestione,
@@ -14,6 +15,22 @@ $rolActual = (int) ($_SESSION['usuario_rol'] ?? 0);
 if ($rolActual !== ROL_ADMINISTRADOR) {
     header('Location: index.php');
     exit;
+}
+
+$errores = [];
+// Se guarda lo que el usuario ya había escrito, para no hacerle repetir
+// todo el formulario si algo falló en la validación.
+$valores = $_POST;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $controlador = new TorneoController();
+    [$errores, $idTorneo] = $controlador->procesarCreacion($_POST, (int) $_SESSION['usuario_id']);
+
+    if (empty($errores)) {
+        // Va directo a asignarle un organizador, que es el paso lógico siguiente.
+        header('Location: asignar-organizador.php?creado=1');
+        exit;
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -74,7 +91,18 @@ if ($rolActual !== ROL_ADMINISTRADOR) {
     </div>
 
     <!-- FORMULARIO PRINCIPAL: agrupa todos los campos necesarios para publicar un torneo. -->
-    <form class="crear-form" id="crearTorneoForm" action="#" method="post" enctype="multipart/form-data">
+    <form class="crear-form" id="crearTorneoForm" action="crear-torneo.php" method="post" enctype="multipart/form-data">
+
+      <?php if (!empty($errores)): ?>
+        <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start; margin-bottom:1rem;">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <ul style="margin:0; padding-left:1.1rem;">
+            <?php foreach ($errores as $error): ?>
+              <li><?= htmlspecialchars($error) ?></li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
+      <?php endif; ?>
 
       <!-- STEPPER: indicador visual de progreso a través de los 6 pasos del formulario. -->
       <div class="crear-stepper" id="crearStepper">
@@ -125,6 +153,7 @@ if ($rolActual !== ROL_ADMINISTRADOR) {
             placeholder="Ej: Mundialito 2026"
             minlength="3"
             maxlength="80"
+            value="<?= htmlspecialchars($valores['nombre'] ?? '') ?>"
             required
           />
         </div>
@@ -340,6 +369,7 @@ if ($rolActual !== ROL_ADMINISTRADOR) {
               name="fecha_inicio_torneo"
               class="form-input-p"
               min="2026-06-06"
+              value="<?= htmlspecialchars($valores['fecha_inicio_torneo'] ?? '') ?>"
               required
             />
           </div>

@@ -1099,29 +1099,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (crearTorneoForm) {
     crearTorneoForm.addEventListener('submit', (evento) => {
-      evento.preventDefault(); // por ahora no hay backend conectado
-
       if (!crearTorneoForm.checkValidity()) {
+        evento.preventDefault();
         crearTorneoForm.reportValidity(); // resalta el primer campo inválido
-        return;
       }
-
-      // TODO (cuando esté el backend PHP): reemplazar este bloque por el envío real.
-      // Como el form ya tiene enctype="multipart/form-data" (por el archivo de reglas en PDF),
-      // FormData junta todos los campos con sus "name" tal cual los va a recibir PHP en $_POST/$_FILES.
-      //
-      // const datos = new FormData(crearTorneoForm);
-      // fetch('backend/crear-torneo.php', { method: 'POST', body: datos })
-      //   .then((respuesta) => respuesta.json())
-      //   .then((resultado) => {
-      //     if (resultado.ok) {
-      //       window.location.href = 'detalle.html?id=' + resultado.id_torneo;
-      //     } else {
-      //       mostrarToast(resultado.mensaje || 'No se pudo crear el torneo.');
-      //     }
-      //   });
-
-      alert('Formulario válido. (Conexión con el servidor pendiente)');
+      // Si es válido, no llamamos a preventDefault: el formulario se manda
+      // solo a crear-torneo.php (mismo archivo), que ya sabe procesar el POST.
     });
   }
 

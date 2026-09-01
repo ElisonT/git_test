@@ -16,6 +16,30 @@ CREATE USER IF NOT EXISTS 'sgdm_app'@'localhost'
 -- Solo lectura/escritura de datos (CRUD). Nada de DROP, ALTER,
 -- CREATE ni GRANT: si el sitio tiene una falla de seguridad,
 -- el usuario de la app no puede borrar tablas ni escalar permisos.
-GRANT SELECT, INSERT, UPDATE, DELETE ON sgdm.* TO 'sgdm_app'@'localhost';
+-- Además, se le pone un techo de uso (consultas por hora y
+-- conexiones simultáneas), para que un bug o un ataque no pueda
+-- dejar la base sin recursos abriendo conexiones sin parar.
+GRANT SELECT, INSERT, UPDATE, DELETE ON sgdm.* TO 'sgdm_app'@'localhost'
+    WITH MAX_QUERIES_PER_HOUR 10000
+         MAX_USER_CONNECTIONS 20;
+
+-- ------------------------------------------------------------
+-- Usuario aparte, de SOLO LECTURA, para los respaldos (mysqldump).
+-- El script de backups (Administración de Sistemas Operativos)
+-- no necesita la contraseña de la app: usa este usuario, que ni
+-- siquiera puede escribir, solo leer y exportar.
+-- ------------------------------------------------------------
+CREATE USER IF NOT EXISTS 'sgdm_backup'@'localhost'
+    IDENTIFIED BY 'CAMBIAR_ESTA_OTRA_CONTRASEÑA';
+
+GRANT SELECT, LOCK TABLES, SHOW VIEW ON sgdm.* TO 'sgdm_backup'@'localhost';
 
 FLUSH PRIVILEGES;
+
+-- ------------------------------------------------------------
+-- Verificación: confirma exactamente qué permisos quedaron
+-- otorgados a cada usuario. Sirve como evidencia para la
+-- documentación de seguridad (una captura de esto alcanza).
+-- ------------------------------------------------------------
+SHOW GRANTS FOR 'sgdm_app'@'localhost';
+SHOW GRANTS FOR 'sgdm_backup'@'localhost';

@@ -114,6 +114,30 @@ class Torneo
         return $consulta->fetchAll();
     }
 
+    /**
+     * Crea un torneo nuevo. Devuelve el id del torneo creado, o false si falló.
+     * Solo guarda los campos mínimos (nombre, deporte, formato, fecha de
+     * inicio); el resto del formulario (premio, reglas, visibilidad, etc.)
+     * se conecta más adelante cuando se amplíe el modelo de datos.
+     */
+    public function crear(string $nombre, string $deporte, string $formato, ?string $fechaInicio, int $creadoPor): int|false
+    {
+        $consulta = $this->conexion->prepare(
+            'INSERT INTO torneos (nombre, deporte, formato, fecha_inicio, creado_por)
+             VALUES (:nombre, :deporte, :formato, :fecha_inicio, :creado_por)'
+        );
+
+        $exito = $consulta->execute([
+            'nombre'       => $nombre,
+            'deporte'      => $deporte,
+            'formato'      => $formato,
+            'fecha_inicio' => $fechaInicio,
+            'creado_por'   => $creadoPor,
+        ]);
+
+        return $exito ? (int) $this->conexion->lastInsertId() : false;
+    }
+
     /** Torneos que un Organizador tiene asignados para gestionar (ver letra 5.2). */
     public function listarAsignados(int $organizadorId): array
     {

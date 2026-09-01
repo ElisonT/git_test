@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $actualizado    = isset($_GET['actualizado']);
+$recienCreado   = isset($_GET['creado']);
 $torneos        = $modeloTorneo->listarTodos();
 $organizadores  = $modeloUsuario->listarPorRol(ROL_ORGANIZADOR);
 $mostrarComoFunciona = false;
@@ -78,7 +79,12 @@ $mostrarComoFunciona = false;
         para que lo gestione (inscribir participantes, generar rondas, cargar resultados).
       </p>
 
-      <?php if ($actualizado): ?>
+      <?php if ($recienCreado): ?>
+        <div class="form-alert form-alert-success" style="display:flex;">
+          <i class="fa-solid fa-circle-check"></i>
+          <span>Torneo creado correctamente. Ahora podés asignarle un organizador.</span>
+        </div>
+      <?php elseif ($actualizado): ?>
         <div class="form-alert form-alert-success" style="display:flex;">
           <i class="fa-solid fa-circle-check"></i>
           <span>Asignación guardada correctamente.</span>
