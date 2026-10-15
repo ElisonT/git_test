@@ -7,3 +7,4 @@ apache
 *.zip
 uploads/avatars/*
 !uploads/avatars/.gitkeep
+LEEME-VM-ALMALINUX.md
