@@ -2,3 +2,6 @@
 # La carpeta se versiona vacía gracias al .gitkeep de adentro.
 uploads/avatars/*
 !uploads/avatars/.gitkeep
+
+# Claves y configuración local de Docker
+.env
