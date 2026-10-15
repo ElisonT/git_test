@@ -27,7 +27,7 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Cómo funciona — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=25" />
+  <link rel="stylesheet" href="styles.css?v=28" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -300,6 +300,6 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
     </div>
   </footer>
 
-<script src="script.js?v=25"></script>
+<script src="script.js?v=28"></script>
 </body>
 </html>

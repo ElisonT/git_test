@@ -2,39 +2,75 @@
 session_start();
 require_once __DIR__ . '/app/Helpers/manejador_errores.php';
 require_once __DIR__ . '/app/Helpers/roles.php';
+require_once __DIR__ . '/app/Helpers/csrf.php';
+require_once __DIR__ . '/app/Helpers/texto.php';
+require_once __DIR__ . '/app/Models/Torneo.php';
+require_once __DIR__ . '/app/Models/Enfrentamiento.php';
 
 $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
     && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR], true);
+
+$torneoId = (int) ($_GET['id'] ?? 0);
+$torneo   = $torneoId > 0 ? (new Torneo())->obtenerPorId($torneoId) : false;
+if (!$torneo) {
+    header('Location: busqueda.php');
+    exit;
+}
+
+$rondas         = (new Enfrentamiento())->listarRondasConEnfrentamientos($torneoId);
+$puedeGestionar = puedeGestionarTorneo($torneo);
+$etiquetasFormato = ['liga' => 'Liga', 'eliminacion' => 'Eliminación directa', 'suizo' => 'Sistema suizo'];
+$unidad = $torneo['modalidad'] === 'individual' ? 'participantes' : 'equipos';
+
+$rondasJugadas = 0;
+$rondasEnCurso = 0;
+$partidosJugados = 0;
+foreach ($rondas as $r) {
+    $total = 0;
+    $jug = 0;
+    foreach ($r['enfrentamientos'] as $e) {
+        if ($e['inscripcion_visitante_id'] === null) {
+            continue;
+        }
+        $total++;
+        if ((int) $e['tiene_resultado'] === 1) {
+            $jug++;
+        }
+    }
+    $partidosJugados += $jug;
+    if ($jug === $total) {
+        $rondasJugadas++;
+    } else {
+        $rondasEnCurso++;
+    }
+}
+
+$aviso = $_SESSION['flash_torneo'] ?? null;
+unset($_SESSION['flash_torneo']);
+
+$tituloPagina = 'Calendario — ' . $torneo['nombre'] . ' — PrimeCup';
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <!-- HEAD: contiene informacion para el navegador; no se muestra como contenido principal de la pagina. -->
-  <!-- charset define la codificacion para que tildes y eñes se lean correctamente. -->
   <meta charset="UTF-8" />
   <script>
     // Aplica el modo oscuro ANTES de que se pinte la página, para evitar el
-    // destello blanco al cargar/cambiar de página (si no, se ve un instante
-    // en claro y recién después salta a oscuro).
+    // destello blanco al cargar/cambiar de página.
     (function () {
       if (localStorage.getItem('sgdm-tema') === 'oscuro') {
         document.documentElement.classList.add('modo-oscuro');
       }
     })();
   </script>
-  <!-- viewport adapta el ancho de la pagina a celulares, tablets y PC. -->
+  <?= metaCsrf() ?>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- title es el texto que aparece en la pestaña del navegador. -->
-  <title>Fechas — Mundialito 2026 — SGDM</title>
-  <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=25" />
-  <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
+  <title><?= escapar($tituloPagina) ?></title>
+  <link rel="stylesheet" href="styles.css?v=28" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
 <body>
-  <!-- BODY: contiene todo lo visible de la pagina: navegacion, contenido principal y pie. -->
 
-  <!-- NAVBAR: menu principal para moverse entre las pantallas del mockup. -->
   <nav class="nav">
     <a href="index.php" class="nav-logo">
       <img src="Imagenes/Logo_Pagina.png" alt="Logo_Página" class="nav-logo-img"/>
@@ -52,44 +88,57 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
   </nav>
 
   <main class="detalle-main">
-    <!-- MAIN: contenido central y especifico de esta pagina. -->
 
-    <!-- ENCABEZADO: titulo de la pantalla y acciones principales de la pagina. -->
     <div class="config-encabezado">
-      <a href="detalle.php?id=1" class="config-volver" id="fechasVolverLink">
+      <a href="detalle.php?id=<?= $torneoId ?>" class="config-volver">
         <i class="fa-solid fa-arrow-left"></i> Volver al torneo
       </a>
       <h1 class="config-titulo">Calendario completo</h1>
-      <p class="config-subtitulo" id="fechasSubtitulo">Mundialito 2026 · Fútbol 11 · Liga · 8 equipos · 7 fechas</p>
+      <p class="config-subtitulo">
+        <?= escapar($torneo['nombre']) ?> · <?= escapar($torneo['deporte']) ?> · <?= escapar($etiquetasFormato[$torneo['formato']]) ?>
+        · <?= (int) $torneo['cantidad_participantes'] ?> <?= $unidad ?> · <?= count($rondas) ?> ronda(s) generada(s)
+      </p>
     </div>
 
-    <!-- RESUMEN: datos generales del fixture, se calculan con JS según el torneo. -->
+    <?php if ($aviso): ?>
+      <?php foreach ($aviso['mensajes'] as $mensaje): ?>
+        <div class="detalle-aviso <?= $aviso['ok'] ? 'detalle-aviso-ok' : 'detalle-aviso-error' ?>" role="status">
+          <?= escapar($mensaje) ?>
+        </div>
+      <?php endforeach; ?>
+    <?php endif; ?>
+
     <div class="perfil-stats">
       <div class="pstat">
-        <div class="pstat-num" id="fechasStatJugadas">-</div>
-        <div class="pstat-label">Fechas jugadas</div>
+        <div class="pstat-num"><?= $rondasJugadas ?></div>
+        <div class="pstat-label">Rondas jugadas</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" id="fechasStatEnCurso">-</div>
-        <div class="pstat-label">Fecha en curso</div>
+        <div class="pstat-num"><?= $rondasEnCurso ?></div>
+        <div class="pstat-label">Ronda en curso</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" id="fechasStatPendientes">-</div>
-        <div class="pstat-label">Fechas pendientes</div>
+        <div class="pstat-num"><?= count($rondas) ?></div>
+        <div class="pstat-label">Rondas generadas</div>
       </div>
       <div class="pstat">
-        <div class="pstat-num" id="fechasStatPartidos">-</div>
+        <div class="pstat-num"><?= $partidosJugados ?></div>
         <div class="pstat-label">Partidos jugados</div>
       </div>
     </div>
 
-    <!-- FECHAS: se generan con JS (ver generarFixture() en script.js), a partir
-         de la lista de equipos/participantes de cada torneo. -->
-    <div id="fechasContenedor"></div>
+    <?php if (empty($rondas)): ?>
+      <p class="tabla-sin-datos">Este torneo todavía no tiene fixture — se genera cuando cierran las inscripciones.</p>
+    <?php else: ?>
+      <?php foreach ($rondas as $ronda): ?>
+        <section class="perfil-seccion">
+          <?php include __DIR__ . '/app/Views/partials/ronda.php'; ?>
+        </section>
+      <?php endforeach; ?>
+    <?php endif; ?>
 
   </main>
 
-  <!-- FOOTER: informacion final comun del sistema. -->
   <footer class="footer">
     <div class="footer-links">
       <a href="como-funciona.php">Cómo funciona</a>
@@ -105,6 +154,6 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
     </div>
   </footer>
 
-<script src="script.js?v=25"></script>
+<script src="script.js?v=28"></script>
 </body>
 </html>

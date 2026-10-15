@@ -55,6 +55,24 @@ $puedeCrearTorneo = $haySesion && in_array((int) ($_SESSION['usuario_rol'] ?? 0)
       </a>
     <?php endif; ?>
 
+    <?php if ((int) ($_SESSION['usuario_rol'] ?? 0) === ROL_PARTICIPANTE): ?>
+      <?php
+        // Aviso de invitaciones: si algo falla (por ejemplo la migración sin correr),
+        // el menú sigue funcionando y simplemente no muestra el número.
+        $invitacionesPendientes = 0;
+        try {
+            require_once __DIR__ . '/../../Models/Equipo.php';
+            $invitacionesPendientes = (new Equipo())->contarInvitacionesPendientes((int) $_SESSION['usuario_id']);
+        } catch (Throwable $errorAviso) {
+            $invitacionesPendientes = 0;
+        }
+      ?>
+      <a href="mis-equipos.php" class="nav-link-visible"
+         title="Mis equipos<?= $invitacionesPendientes > 0 ? ' — tenés ' . $invitacionesPendientes . ' invitación(es) pendiente(s)' : '' ?>">
+        <i class="fa-solid fa-people-group nav-link-icon"></i>Mis equipos<?php if ($invitacionesPendientes > 0): ?><span class="nav-badge" aria-label="<?= $invitacionesPendientes ?> invitaciones pendientes"><?= $invitacionesPendientes ?></span><?php endif; ?>
+      </a>
+    <?php endif; ?>
+
     <a href="logout.php" class="nav-link-visible" title="Cerrar sesión">
       <i class="fa-solid fa-right-from-bracket nav-link-icon"></i>Cerrar sesión
     </a>

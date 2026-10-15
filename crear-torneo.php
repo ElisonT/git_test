@@ -1,7 +1,11 @@
 <?php
 session_start();
 require_once __DIR__ . '/app/Helpers/manejador_errores.php';
+require_once __DIR__ . '/app/Helpers/csrf.php';
+exigirCsrf('crear-torneo.php');
 require_once __DIR__ . '/app/Helpers/roles.php';
+require_once __DIR__ . '/app/Models/Deporte.php';
+require_once __DIR__ . '/app/Helpers/texto.php';
 require_once __DIR__ . '/app/Controllers/TorneoController.php';
 
 // Según la letra (5.1 y 5.2): el Administrador general CREA los torneos.
@@ -33,6 +37,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 }
+
+$deportes = (new Deporte())->listarTodos();
+$hoy = (new DateTimeImmutable('now', new DateTimeZone('America/Montevideo')))->format('Y-m-d');
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -55,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Crear torneo — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=25" />
+  <link rel="stylesheet" href="styles.css?v=28" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -92,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <!-- FORMULARIO PRINCIPAL: agrupa todos los campos necesarios para publicar un torneo. -->
-    <form class="crear-form" id="crearTorneoForm" action="crear-torneo.php" method="post" enctype="multipart/form-data">
+    <form class="crear-form" id="crearTorneoForm" action="crear-torneo.php" method="post" enctype="multipart/form-data"> <?= campoCsrf() ?>
 
       <?php if (!empty($errores)): ?>
         <div class="form-alert form-alert-error" style="display:flex; align-items:flex-start; margin-bottom:1rem;">
@@ -164,30 +171,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           <label class="form-label-p" for="deporte">Deporte o categoría</label>
           <select id="deporte" name="deporte" class="form-input-p" required>
             <option value="">Seleccioná un deporte...</option>
-            <optgroup label="Deportes tradicionales">
-              <option value="futbol11">Fútbol 11</option>
-              <option value="futbol5">Fútbol 5</option>
-              <option value="basquetbol">Básquetbol</option>
-              <option value="tenis">Tenis</option>
-              <option value="padel">Pádel</option>
-              <option value="pingpong">Ping pong</option>
-            </optgroup>
-            <optgroup label="Juegos de mesa / carta">
-              <option value="ajedrez">Ajedrez</option>
-              <option value="truco">Truco</option>
-              <option value="damas">Damas</option>
-            </optgroup>
-            <optgroup label="Videojuegos">
-              <option value="cs2">CS2</option>
-              <option value="lol">League of Legends</option>
-              <option value="fortnite">Fortnite</option>
-              <option value="valorant">Valorant</option>
-              <option value="rocketleague">Rocket League</option>
-            </optgroup>
-            <optgroup label="Otro">
-              <option value="otro">Otro</option>
-            </optgroup>
+            <?php $categoriaActual = null; ?>
+            <?php foreach ($deportes as $dep): ?>
+              <?php if ($dep['categoria'] !== $categoriaActual): ?>
+                <?php if ($categoriaActual !== null): ?></optgroup><?php endif; ?>
+                <?php $categoriaActual = $dep['categoria']; ?>
+                <optgroup label="<?= escapar($categoriaActual) ?>">
+              <?php endif; ?>
+              <option value="<?= escapar($dep['codigo']) ?>" data-jugadores="<?= (int) $dep['jugadores_por_equipo'] ?>" data-libre="<?= (int) $dep['es_libre'] ?>" <?= (($valores['deporte'] ?? '') === $dep['codigo']) ? 'selected' : '' ?>><?= escapar($dep['nombre']) ?></option>
+            <?php endforeach; ?>
+            <?php if ($categoriaActual !== null): ?></optgroup><?php endif; ?>
           </select>
+        </div>
+
+        <!-- Solo si el deporte es "Otro": se escribe cuál es y cuántos jugadores lleva cada equipo. -->
+        <div id="grupoDeporteOtro" style="display:none;">
+          <div class="form-group">
+            <label class="form-label-p" for="deporte_otro">Nombre del deporte o juego</label>
+            <input type="text" id="deporte_otro" name="deporte_otro" class="form-input-p"
+                   placeholder="Ej: Quemada, Mus, Brawl Stars" maxlength="60"
+                   value="<?= escapar($valores['deporte_otro'] ?? '') ?>" />
+            <span class="form-hint-p">Los equipos tienen que escribirlo igual para poder inscribirse.</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label-p" for="jugadores_otro">Jugadores por equipo</label>
+            <input type="number" id="jugadores_otro" name="jugadores_otro" class="form-input-p"
+                   min="1" max="50" placeholder="1 si es individual"
+                   value="<?= escapar($valores['jugadores_otro'] ?? '') ?>" />
+            <span class="form-hint-p">Poné 1 si se juega de forma individual; 2 o más si es por equipos.</span>
+          </div>
         </div>
 
         <!-- Descripcion: textarea para explicar brevemente el torneo. -->
@@ -269,16 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           <div class="form-group">
             <label class="form-label-p">Modalidad</label>
-            <div class="radio-inline">
-              <label class="radio-opcion">
-                <input type="radio" name="modalidad" value="individual" required />
-                <span>Individual</span>
-              </label>
-              <label class="radio-opcion">
-                <input type="radio" name="modalidad" value="equipos" />
-                <span>Por equipos</span>
-              </label>
-            </div>
+            <p class="form-hint-p" id="infoModalidad">Se define según el deporte que elijas.</p>
           </div>
 
           <div class="form-group">
@@ -308,20 +311,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <span class="form-hint-p">"Mixto" si no importa el género de los participantes.</span>
           </div>
 
-          <!-- Solo aplica si la modalidad es "equipos"; se muestra/oculta con JS. -->
-          <div class="form-group" id="grupoJugadoresPorEquipo" style="display:none;">
-            <label class="form-label-p" for="jugadores_por_equipo">Jugadores por equipo</label>
-            <input
-              type="number"
-              id="jugadores_por_equipo"
-              name="jugadores_por_equipo"
-              class="form-input-p"
-              placeholder="ej: 11"
-              min="1"
-              max="50"
-            />
-            <span class="form-hint-p">Cantidad de jugadores que necesita cada equipo.</span>
-          </div>
         </div>
       </section>
 
@@ -343,7 +332,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               id="fecha-inicio-inscripcion"
               name="fecha_inicio_inscripcion"
               class="form-input-p"
-              min="2026-06-06"
+              min="<?= $hoy ?>"
+              value="<?= escapar($valores['fecha_inicio_inscripcion'] ?? '') ?>"
               required
             />
           </div>
@@ -355,7 +345,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               id="fecha-cierre-inscripcion"
               name="fecha_cierre_inscripcion"
               class="form-input-p"
-              min="2026-06-06"
+              min="<?= $hoy ?>"
+              value="<?= escapar($valores['fecha_cierre_inscripcion'] ?? '') ?>"
               required
             />
           </div>
@@ -369,7 +360,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               id="fecha-inicio-torneo"
               name="fecha_inicio_torneo"
               class="form-input-p"
-              min="2026-06-06"
+              min="<?= $hoy ?>"
               value="<?= htmlspecialchars($valores['fecha_inicio_torneo'] ?? '') ?>"
               required
             />
@@ -382,7 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               id="fecha-fin-torneo"
               name="fecha_fin_torneo"
               class="form-input-p"
-              min="2026-06-06"
+              min="<?= $hoy ?>"
+              value="<?= escapar($valores['fecha_fin_torneo'] ?? '') ?>"
               required
             />
           </div>
@@ -567,6 +559,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
   </footer>
 
-<script src="script.js?v=25"></script>
+<script src="script.js?v=28"></script>
 </body>
 </html>

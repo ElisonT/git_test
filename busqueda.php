@@ -2,6 +2,31 @@
 session_start();
 require_once __DIR__ . '/app/Helpers/manejador_errores.php';
 require_once __DIR__ . '/app/Helpers/roles.php';
+require_once __DIR__ . '/app/Helpers/texto.php';
+require_once __DIR__ . '/app/Models/Torneo.php';
+require_once __DIR__ . '/app/Models/Deporte.php';
+require_once __DIR__ . '/app/Helpers/inscripcion_fechas.php';
+
+$torneos = (new Torneo())->listarParaBusqueda();
+// Juegos escritos a mano en torneos "Otro": no están en la lista fija del filtro, así que se agregan.
+$nombresCatalogo = array_map(fn ($d) => mb_strtolower($d['nombre']), (new Deporte())->listarTodos());
+$deportesPersonalizados = array_values(array_unique(array_filter(
+    array_column($torneos, 'deporte'),
+    fn ($nombre) => !in_array(mb_strtolower($nombre), $nombresCatalogo, true)
+)));
+sort($deportesPersonalizados);
+
+$etiquetasFormato = ['liga' => 'Liga', 'eliminacion' => 'Eliminación directa', 'suizo' => 'Sistema suizo'];
+$etiquetasEstado  = [
+    'inscripciones_abiertas' => ['texto' => 'Inscripciones abiertas', 'clase' => 'estado-verde'],
+    'en_curso'               => ['texto' => 'En curso',               'clase' => 'estado-naranja'],
+    'finalizado'             => ['texto' => 'Finalizado',             'clase' => 'estado-rojo'],
+];
+$descripcionesFormato = [
+    'liga'        => 'Todos contra todos, puntos por resultado.',
+    'eliminacion' => 'Eliminación directa: el que pierde queda afuera.',
+    'suizo'       => 'Sistema suizo: rondas fijas, sin repetir rival.',
+];
 
 $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
     && in_array((int) ($_SESSION['usuario_rol'] ?? 0), [ROL_ADMINISTRADOR], true);
@@ -27,7 +52,7 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Buscar torneos — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=25" />
+  <link rel="stylesheet" href="styles.css?v=28" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -78,6 +103,7 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
               <option>Fútbol 5</option>
               <option>Básquetbol</option>
               <option>Tenis</option>
+              <option>Tenis dobles</option>
               <option>Pádel</option>
               <option>Ping pong</option>
             </optgroup>
@@ -96,6 +122,13 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
             <optgroup label="Otro">
               <option>Otro</option>
             </optgroup>
+            <?php if (!empty($deportesPersonalizados)): ?>
+              <optgroup label="Otros juegos">
+                <?php foreach ($deportesPersonalizados as $nombreDeporte): ?>
+                  <option><?= escapar($nombreDeporte) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
+            <?php endif; ?>
           </select>
         </div>
 
@@ -120,7 +153,7 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
 
       <!-- CONTADOR DE RESULTADOS: texto que indica cuantos torneos coinciden con la busqueda. -->
       <div class="busqueda-count">
-        <span>6 torneos encontrados</span>
+        <span><?= count($torneos) ?> torneos encontrados</span>
       </div>
 
     </div>
@@ -131,289 +164,46 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
        Cada resultado resume deporte, formato, fecha, cupos y estado.
        ===================== -->
   <main class="busqueda-main">
-    <!-- MAIN: contenido central y especifico de esta pagina. -->
-
-    <!-- RESULTADO 1: tarjeta de ejemplo de un torneo encontrado. -->
-    <a href="detalle.php?id=1" class="resultado-card" data-deporte="Fútbol 11" data-tipo="Liga" data-estado="En curso">
-      <div class="resultado-img resultado-img-futbol">
-        <i class="fa-solid fa-futbol"></i>
-      </div>
+    <!-- TARJETAS: una por torneo real de la base. Los data-* los usa el filtrado de script.js. -->
+    <?php foreach ($torneos as $t):
+      $estado   = $etiquetasEstado[$t['estado']];
+      $formato  = $etiquetasFormato[$t['formato']];
+      $unidad   = $t['modalidad'] === 'individual' ? 'participantes' : 'equipos';
+      if ($t['estado'] === 'finalizado') {
+          $fechaTxt = 'Finalizado';
+      } elseif ($t['estado'] === 'inscripciones_abiertas') {
+          $ventana  = ventanaDeInscripcion($t);
+          $fechaTxt = match ($ventana['estado']) {
+              'cerrada'  => 'Inscripción cerrada',
+              'no_abrio' => 'Abre el ' . formatearFecha($ventana['abre']),
+              default    => $ventana['cierra'] !== null
+                  ? 'Inscripción hasta el ' . formatearFecha($ventana['cierra'])
+                  : formatearFecha($t['fecha_inicio']),
+          };
+      } else {
+          $fechaTxt = formatearFecha($t['fecha_inicio']);
+      }
+    ?>
+    <a href="detalle.php?id=<?= (int) $t['id'] ?>" class="resultado-card"
+       data-deporte="<?= escapar($t['deporte']) ?>"
+       data-tipo="<?= escapar($formato) ?>"
+       data-estado="<?= escapar($estado['texto']) ?>">
+      <div class="resultado-img"><i class="fa-solid fa-trophy"></i></div>
       <div class="resultado-info">
-        <div class="resultado-categoria">Fútbol 11 · Liga</div>
-        <h2 class="resultado-nombre">Mundialito 2026</h2>
-        <p class="resultado-desc">Torneo de fútbol 11 para equipos amateur. Todos contra todos, puntos por victoria.</p>
+        <div class="resultado-categoria"><?= escapar($t['deporte']) ?> · <?= escapar($formato) ?></div>
+        <h2 class="resultado-nombre"><?= escapar($t['nombre']) ?></h2>
+        <p class="resultado-desc"><?= escapar($descripcionesFormato[$t['formato']]) ?></p>
         <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 8 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 15 jun — 30 ago 2026</span>
+          <span><i class="fa-solid fa-users"></i> <?= (int) $t['cantidad_participantes'] ?> <?= $unidad ?></span>
+          <span><i class="fa-solid fa-calendar"></i> <?= escapar($fechaTxt) ?></span>
         </div>
       </div>
       <div class="resultado-accion">
-        <span class="badge estado-naranja">En curso · Fecha 4</span>
+        <span class="badge <?= $estado['clase'] ?>"><?= escapar($estado['texto']) ?></span>
         <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
       </div>
     </a>
-
-    <!-- RESULTADO 2: segunda tarjeta de ejemplo del listado. -->
-    <a href="detalle.php?id=2" class="resultado-card" data-deporte="Ajedrez" data-tipo="Sistema suizo" data-estado="Inscripciones abiertas">
-      <div class="resultado-img resultado-img-ajedrez">
-        <i class="fa-solid fa-chess"></i>
-      </div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Ajedrez · Sistema suizo</div>
-        <h2 class="resultado-nombre">Torneo de ajedrez UTU</h2>
-        <p class="resultado-desc">Competencia de ajedrez por sistema suizo. Rondas semanales, clasificación acumulada.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 128 participantes</span>
-          <span><i class="fa-solid fa-calendar"></i> 28 jul</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 3: tercera tarjeta de ejemplo del listado. -->
-    <a href="detalle.php?id=3" class="resultado-card" data-deporte="CS2" data-tipo="Eliminación directa" data-estado="Finalizado">
-      <div class="resultado-img resultado-img-cs">
-        <i class="fa-solid fa-gamepad"></i>
-      </div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">CS2 · Eliminación directa</div>
-        <h2 class="resultado-nombre">CS:2 Gaming Cup</h2>
-        <p class="resultado-desc">Copa de Counter-Strike 2 en formato eliminación directa. 16 equipos, llaves automáticas.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 16 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> Finalizado 20 jun</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-rojo">Finalizado</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 4: cuarta tarjeta de ejemplo del listado. -->
-    <a href="detalle.php?id=4" class="resultado-card" data-deporte="Básquetbol" data-tipo="Liga" data-estado="Inscripciones abiertas">
-      <div class="resultado-img resultado-img-basquet">
-        <i class="fa-solid fa-basketball"></i>
-      </div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Básquetbol · Liga</div>
-        <h2 class="resultado-nombre">Liga Barrial de Básquet 2026</h2>
-        <p class="resultado-desc">Liga de básquetbol barrial, abierta a equipos de todo Montevideo.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 8 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 1 jul — 15 sep 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 5: quinta tarjeta de ejemplo del listado. -->
-    <a href="detalle.php?id=5" class="resultado-card" data-deporte="Valorant" data-tipo="Eliminación directa" data-estado="Inscripciones abiertas">
-      <div class="resultado-img resultado-img-valorant">
-        <i class="fa-solid fa-crosshairs"></i>
-      </div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Valorant · Eliminación directa</div>
-        <h2 class="resultado-nombre">Valorant Open UY</h2>
-        <p class="resultado-desc">Torneo abierto de Valorant para equipos uruguayos. Cupos limitados.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 32 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 10 jul 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 6: sexta tarjeta de ejemplo del listado. -->
-    <a href="detalle.php?id=6" class="resultado-card" data-deporte="Tenis" data-tipo="Eliminación directa" data-estado="Finalizado">
-      <div class="resultado-img resultado-img-tenis">
-        <i class="fa-solid fa-table-tennis-paddle-ball"></i>
-      </div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Tenis · Eliminación directa</div>
-        <h2 class="resultado-nombre">Copa Tenis Arias 2025</h2>
-        <p class="resultado-desc">Torneo de tenis individual, categorías A y B. Ya finalizado.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 24 participantes</span>
-          <span><i class="fa-solid fa-calendar"></i> Oct — Nov 2025</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-rojo">Finalizado</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 7 -->
-    <a href="detalle.php?id=7" class="resultado-card" data-deporte="Fútbol 5" data-tipo="Sistema suizo" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-futbol"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Fútbol 5 · Sistema suizo</div>
-        <h2 class="resultado-nombre">Copa Fútbol 5 Ciudad Vieja</h2>
-        <p class="resultado-desc">Torneo de fútbol 5 entre equipos del barrio Ciudad Vieja. Formato suizo a 5 rondas.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 12 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 5 ago 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 8 -->
-    <a href="detalle.php?id=8" class="resultado-card" data-deporte="Pádel" data-tipo="Eliminación directa" data-estado="En curso">
-      <div class="resultado-img"><i class="fa-solid fa-table-tennis-paddle-ball"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Pádel · Eliminación directa</div>
-        <h2 class="resultado-nombre">Open de Pádel Punta Carretas</h2>
-        <p class="resultado-desc">Torneo de pádel en parejas, eliminación directa desde octavos.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 16 parejas</span>
-          <span><i class="fa-solid fa-calendar"></i> En curso · Fecha 2</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-naranja">En curso</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 9 -->
-    <a href="detalle.php?id=9" class="resultado-card" data-deporte="Ping pong" data-tipo="Liga" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-table-tennis-paddle-ball"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Ping pong · Liga</div>
-        <h2 class="resultado-nombre">Liga de Ping Pong ITS</h2>
-        <p class="resultado-desc">Liga interna de ping pong entre estudiantes del instituto.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 10 participantes</span>
-          <span><i class="fa-solid fa-calendar"></i> 12 ago 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 10 -->
-    <a href="detalle.php?id=10" class="resultado-card" data-deporte="Truco" data-tipo="Sistema suizo" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-heart"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Truco · Sistema suizo</div>
-        <h2 class="resultado-nombre">Torneo de Truco Amistoso</h2>
-        <p class="resultado-desc">Competencia de truco en parejas, sistema suizo, clasificación por puntos.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 20 parejas</span>
-          <span><i class="fa-solid fa-calendar"></i> 20 ago 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 11 -->
-    <a href="detalle.php?id=11" class="resultado-card" data-deporte="Damas" data-tipo="Eliminación directa" data-estado="Finalizado">
-      <div class="resultado-img"><i class="fa-solid fa-chess-board"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Damas · Eliminación directa</div>
-        <h2 class="resultado-nombre">Copa Damas Clásicas</h2>
-        <p class="resultado-desc">Torneo de damas 1 contra 1, eliminación directa a partido único.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 32 participantes</span>
-          <span><i class="fa-solid fa-calendar"></i> Finalizado 5 may</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-rojo">Finalizado</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 12 -->
-    <a href="detalle.php?id=12" class="resultado-card" data-deporte="League of Legends" data-tipo="Liga" data-estado="En curso">
-      <div class="resultado-img"><i class="fa-solid fa-dragon"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">League of Legends · Liga</div>
-        <h2 class="resultado-nombre">LoL PrimeCup Season 1</h2>
-        <p class="resultado-desc">Liga de League of Legends 5 contra 5 entre equipos amateurs.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 10 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> En curso · Fecha 6</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-naranja">En curso</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 13 -->
-    <a href="detalle.php?id=13" class="resultado-card" data-deporte="Fortnite" data-tipo="Eliminación directa" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-explosion"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Fortnite · Eliminación directa</div>
-        <h2 class="resultado-nombre">Fortnite Solo Showdown</h2>
-        <p class="resultado-desc">Torneo de Fortnite en modalidad solo, eliminación directa por puntaje.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 50 participantes</span>
-          <span><i class="fa-solid fa-calendar"></i> 18 ago 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 14 -->
-    <a href="detalle.php?id=14" class="resultado-card" data-deporte="Rocket League" data-tipo="Sistema suizo" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-rocket"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Rocket League · Sistema suizo</div>
-        <h2 class="resultado-nombre">Rocket League 3v3 Cup</h2>
-        <p class="resultado-desc">Torneo de Rocket League en equipos de 3, sistema suizo.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 12 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 25 ago 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
-
-    <!-- RESULTADO 15 -->
-    <a href="detalle.php?id=15" class="resultado-card" data-deporte="Otro" data-tipo="Liga" data-estado="Inscripciones abiertas">
-      <div class="resultado-img"><i class="fa-solid fa-shapes"></i></div>
-      <div class="resultado-info">
-        <div class="resultado-categoria">Otro · Liga</div>
-        <h2 class="resultado-nombre">Torneo Libre Multideporte</h2>
-        <p class="resultado-desc">Espacio para competencias que no encajan en las categorías tradicionales.</p>
-        <div class="resultado-meta">
-          <span><i class="fa-solid fa-users"></i> 6 equipos</span>
-          <span><i class="fa-solid fa-calendar"></i> 1 sep 2026</span>
-        </div>
-      </div>
-      <div class="resultado-accion">
-        <span class="badge estado-verde">Inscripciones abiertas</span>
-        <span class="resultado-ver">Ver torneo <i class="fa-solid fa-arrow-right"></i></span>
-      </div>
-    </a>
+    <?php endforeach; ?>
 
     <!-- PAGINACIÓN: navegación entre páginas de resultados. -->
     <!-- ESTADO VACÍO: se muestra solo si ningún torneo coincide con los filtros elegidos. -->
@@ -451,6 +241,6 @@ $puedeCrearTorneo = !empty($_SESSION['usuario_id'])
     </div>
   </footer>
 
-<script src="script.js?v=25"></script>
+<script src="script.js?v=28"></script>
 </body>
 </html>

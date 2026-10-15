@@ -436,8 +436,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===== VISTAS DEL PANEL ADMIN (Dashboard / Usuarios / Torneos, sin recargar la página) =====
-  const VISTAS_VALIDAS = ['dashboard', 'usuarios', 'torneos', 'modulos'];
-  const TITULOS_VISTA = { dashboard: 'Dashboard', usuarios: 'Usuarios', torneos: 'Torneos', modulos: 'Módulos de competencia' };
+  let alMostrarVista = null; // lo define el panel admin más abajo (carga las listas con fetch)
+  const VISTAS_VALIDAS = ['dashboard', 'usuarios', 'torneos', 'auditoria', 'modulos'];
+  const TITULOS_VISTA = { dashboard: 'Dashboard', usuarios: 'Usuarios', torneos: 'Torneos', auditoria: 'Auditoría', modulos: 'Formatos de competencia' };
   const tituloPagina = document.querySelector('.admin-page-titulo');
 
   function mostrarVista(vista, hacerScroll) {
@@ -450,6 +451,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tituloPagina && TITULOS_VISTA[vista]) {
       tituloPagina.textContent = TITULOS_VISTA[vista];
     }
+
+    // Las listas del panel (usuarios, torneos, auditoría) se piden al servidor la primera vez que se abren
+    if (alMostrarVista) alMostrarVista(vista);
 
     // Resalta el link correspondiente en el sidebar
     document.querySelectorAll('.admin-nav-link').forEach((link) => {
@@ -509,107 +513,255 @@ document.addEventListener('DOMContentLoaded', () => {
     toast.classList.add('visible');
 
     clearTimeout(toastTimeout);
+    // Los avisos largos (por ejemplo una explicación del servidor) necesitan más tiempo para leerse
     toastTimeout = setTimeout(() => {
       toast.classList.remove('visible');
-    }, 2500);
+    }, Math.max(2500, mensaje.length * 70));
   }
 
-  // Resta 1 al número mostrado en una tarjeta de estadística del dashboard
-  function restarStat(selectorLabel) {
-    const tarjetas = document.querySelectorAll('.admin-stat-card');
-    tarjetas.forEach((tarjeta) => {
-      const label = tarjeta.querySelector('.admin-stat-label');
-      if (label && label.textContent.trim() === selectorLabel) {
-        const numSpan = tarjeta.querySelector('.admin-stat-num');
-        const valorActual = parseFloat(numSpan.textContent.replace('k', '')) || 0;
-        const esMiles = numSpan.textContent.includes('k');
-        const nuevoValor = Math.max(0, valorActual - (esMiles ? 0.1 : 1));
-        numSpan.textContent = esMiles ? nuevoValor.toFixed(1) + 'k' : Math.round(nuevoValor);
+  // ===== COMUNICACIÓN ASINCRÓNICA (fetch) =====
+  // Todo lo que sigue habla con el servidor sin recargar la página: se manda el pedido con
+  // fetch, el servidor (api/*.php) responde JSON y acá se actualiza solo la parte que cambió.
+  // El token CSRF sale de un <meta> que deja el PHP en la página.
+  const tokenCsrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  async function pedirJson(url, opciones = {}) {
+    try {
+      const respuesta = await fetch(url, {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', 'X-CSRF-Token': tokenCsrf },
+        ...opciones,
+      });
+      const datos = await respuesta.json().catch(() => null);
+      if (!datos) return { ok: false, mensajes: ['El servidor respondió algo inesperado. Probá de nuevo.'] };
+      return datos;
+    } catch (error) {
+      return { ok: false, mensajes: ['No se pudo conectar con el servidor. Revisá tu conexión.'] };
+    }
+  }
+
+  // Crea un elemento con clase y texto (textContent: nunca interpreta HTML, evita XSS)
+  function crear(etiqueta, clase, texto) {
+    const nodo = document.createElement(etiqueta);
+    if (clase) nodo.className = clase;
+    if (texto !== undefined) nodo.textContent = texto;
+    return nodo;
+  }
+
+  // Si la página se recargó después de una acción asincrónica, se muestra el aviso pendiente
+  const avisoPendiente = sessionStorage.getItem('sgdm-aviso');
+  if (avisoPendiente) {
+    sessionStorage.removeItem('sgdm-aviso');
+    mostrarToast(avisoPendiente);
+  }
+
+  // ----- Cargar y corregir resultados (detalle.php y fechas.php) -----
+  // Los formularios .js-resultado-form funcionan solos (POST normal); acá se mandan por fetch
+  // y el servidor devuelve la ronda y la tabla ya redibujadas.
+  document.addEventListener('submit', async (evento) => {
+    const form = evento.target.closest('.js-resultado-form');
+    if (!form) return;
+    evento.preventDefault();
+
+    const boton = form.querySelector('button[type="submit"]');
+    boton.disabled = true;
+
+    const datos = new FormData(form);
+    datos.set('accion', form.dataset.accion); // 'cargar' o 'corregir'
+    const respuesta = await pedirJson('api/resultado.php', { method: 'POST', body: datos });
+    boton.disabled = false;
+
+    if (!respuesta.ok) {
+      mostrarToast(respuesta.mensajes.join(' '));
+      return;
+    }
+
+    // Cambió el estado del torneo o ya no quedan pendientes: se recarga para mostrar los botones correctos
+    if (respuesta.recargar) {
+      sessionStorage.setItem('sgdm-aviso', respuesta.mensajes[0]);
+      window.location.reload();
+      return;
+    }
+
+    const ronda = document.getElementById('ronda-' + respuesta.rondaId);
+    if (ronda) ronda.outerHTML = respuesta.rondaHtml;
+
+    const tabla = document.getElementById('tablaPosicionesContenedor');
+    if (tabla && respuesta.tablaHtml !== null) tabla.innerHTML = respuesta.tablaHtml;
+
+    document.querySelectorAll('[data-stat="jugados"]').forEach((n) => { n.textContent = respuesta.stats.jugados; });
+    document.querySelectorAll('[data-stat="pendientes"]').forEach((n) => { n.textContent = respuesta.stats.pendientes; });
+
+    mostrarToast(respuesta.mensajes[0]);
+  });
+
+  // ----- Panel de administración: listas reales con filtros y paginación -----
+  const panelAdmin = document.querySelector('.admin-main');
+
+  if (panelAdmin) {
+    const miId = panelAdmin.dataset.yo;
+    const ETIQUETA_ESTADO_TORNEO = { inscripciones_abiertas: 'Abierto', en_curso: 'En curso', finalizado: 'Finalizado' };
+    const CLASE_ESTADO_TORNEO = { inscripciones_abiertas: 'estado-verde', en_curso: 'estado-naranja', finalizado: 'estado-azul' };
+    const ETIQUETA_FORMATO = { liga: 'Liga', eliminacion: 'Eliminación', suizo: 'Suizo' };
+
+    function formatearFechaHora(texto) {
+      // 'AAAA-MM-DD HH:MM:SS' -> 'DD/MM/AAAA HH:MM'
+      const [fecha, hora = ''] = String(texto).split(' ');
+      const [a, m, d] = fecha.split('-');
+      return d + '/' + m + '/' + a + ' ' + hora.slice(0, 5);
+    }
+
+    function insignia(clase, texto) {
+      const nodo = crear('span', 'badge ' + clase, texto);
+      nodo.style.marginTop = '0';
+      return nodo;
+    }
+
+    // Cómo se dibuja cada fila de cada lista
+    function filaUsuario(u) {
+      const fila = crear('div', 'panel-fila');
+      const principal = crear('div', 'panel-fila-main');
+      principal.append(crear('span', 'admin-user-nombre', u.nombre_completo),
+                       crear('span', 'admin-user-email', '@' + u.nombre_usuario + ' · ' + u.email));
+      const rol = crear('span', 'admin-rol ' + (Number(u.rol_id) === 2 ? 'admin-rol-organizador' : 'admin-rol-participante'), u.rol);
+      let estado;
+      if (Number(u.eliminado) === 1) estado = insignia('estado-gris', 'Baja');
+      else if (Number(u.activo) === 1) estado = insignia('estado-verde', 'Activo');
+      else estado = insignia('estado-rojo', 'Suspendido');
+      fila.append(principal, rol, estado);
+
+      // Se puede suspender/reactivar a cualquiera menos a uno mismo, a otro admin o a una cuenta dada de baja
+      const esAdmin = Number(u.rol_id) === 1;
+      if (Number(u.eliminado) !== 1 && !esAdmin && String(u.id) !== miId) {
+        const activo = Number(u.activo) === 1;
+        const boton = crear('button', 'admin-btn-icono' + (activo ? ' admin-btn-danger' : ''));
+        boton.type = 'button';
+        boton.title = activo ? 'Suspender' : 'Reactivar';
+        boton.setAttribute('aria-label', boton.title + ' a ' + u.nombre_completo);
+        boton.innerHTML = activo ? '<i class="fa-solid fa-ban"></i>' : '<i class="fa-solid fa-rotate-left"></i>';
+        boton.addEventListener('click', () => cambiarEstadoUsuario(u, !activo, boton));
+        fila.append(boton);
       }
-    });
-  }
+      return fila;
+    }
 
-  // Quita una fila de la tabla con una pequeña animación de salida
-  function eliminarFila(fila) {
-    fila.classList.add('saliendo');
-    setTimeout(() => fila.remove(), 200);
-  }
+    function filaTorneo(t) {
+      const fila = crear('div', 'panel-fila');
+      const principal = crear('div', 'panel-fila-main');
+      const enlace = crear('a', 'admin-user-nombre', t.nombre);
+      enlace.href = 'detalle.php?id=' + encodeURIComponent(t.id);
+      principal.append(enlace, crear('span', 'admin-user-email',
+        t.deporte + ' · ' + (ETIQUETA_FORMATO[t.formato] || t.formato) + ' · ' + t.inscriptos + ' inscriptos · ' +
+        t.partidos_jugados + ' jugados / ' + t.partidos_pendientes + ' pendientes · ' +
+        (t.nombre_organizador ? 'Organiza: ' + t.nombre_organizador : 'Sin organizador')));
+      fila.append(principal, insignia(CLASE_ESTADO_TORNEO[t.estado] || '', ETIQUETA_ESTADO_TORNEO[t.estado] || t.estado));
+      return fila;
+    }
 
-  // ===== TABLA DE USUARIOS (editar / suspender / eliminar) =====
-  document.querySelectorAll('[data-action="editar-usuario"]').forEach((boton) => {
-    boton.addEventListener('click', () => {
-      const fila = boton.closest('.admin-tabla-fila');
-      const nombreSpan = fila.querySelector('.admin-user-nombre');
-      const nuevoNombre = prompt('Editar nombre de usuario:', nombreSpan.textContent);
-      if (nuevoNombre && nuevoNombre.trim() !== '') {
-        nombreSpan.textContent = nuevoNombre.trim();
-        mostrarToast('Usuario actualizado');
+    function filaAuditoria(a) {
+      const fila = crear('div', 'panel-fila');
+      const principal = crear('div', 'panel-fila-main');
+      principal.append(crear('span', 'admin-user-nombre', a.detalle || '(sin detalle)'),
+        crear('span', 'admin-user-email',
+          formatearFechaHora(a.fecha) + ' · ' + (a.nombre_usuario ? '@' + a.nombre_usuario : 'sistema') + (a.ip ? ' · ' + a.ip : '')));
+      fila.append(principal, insignia('estado-azul', a.accion));
+      return fila;
+    }
+
+    // Una lista de cada tipo: dónde se dibuja, a qué acción del servidor se pide y cómo se arma cada fila
+    const PANELES = {
+      usuarios:  { lista: '#listaUsuarios',  dibujar: filaUsuario,   vacio: 'No hay usuarios con ese filtro.' },
+      torneos:   { lista: '#listaTorneos',   dibujar: filaTorneo,    vacio: 'No hay torneos con ese filtro.' },
+      auditoria: { lista: '#listaAuditoria', dibujar: filaAuditoria, vacio: 'No hay registros con ese filtro.' },
+    };
+    const estadoPaneles = {};
+
+    async function cargarPanel(nombre, pagina) {
+      const config = PANELES[nombre];
+      const lista = document.querySelector(config.lista);
+      const barra = document.querySelector('[data-panel="' + nombre + '"]');
+      const pie = document.querySelector('[data-paginacion="' + nombre + '"]');
+      const estado = estadoPaneles[nombre] = estadoPaneles[nombre] || { pagina: 1 };
+      estado.pagina = pagina || estado.pagina;
+
+      const parametros = new URLSearchParams({ accion: nombre, pagina: estado.pagina });
+      barra.querySelectorAll('[data-filtro]').forEach((campo) => parametros.set(campo.dataset.filtro, campo.value.trim()));
+
+      lista.replaceChildren(crear('p', 'tabla-sin-datos', 'Cargando…'));
+      const respuesta = await pedirJson('api/admin.php?' + parametros.toString());
+
+      if (!respuesta.ok) {
+        const error = crear('p', 'tabla-sin-datos', respuesta.mensajes.join(' ') + ' ');
+        const reintentar = crear('button', 'btn', 'Reintentar');
+        reintentar.type = 'button';
+        reintentar.addEventListener('click', () => cargarPanel(nombre));
+        error.append(reintentar);
+        lista.replaceChildren(error);
+        pie.replaceChildren();
+        return;
       }
+
+      estado.pagina = respuesta.pagina;
+      lista.replaceChildren(...(respuesta.filas.length
+        ? respuesta.filas.map(config.dibujar)
+        : [crear('p', 'tabla-sin-datos', config.vacio)]));
+
+      const anterior = crear('button', 'btn', '← Anterior');
+      const siguiente = crear('button', 'btn', 'Siguiente →');
+      anterior.type = siguiente.type = 'button';
+      anterior.disabled = respuesta.pagina <= 1;
+      siguiente.disabled = respuesta.pagina >= respuesta.paginas;
+      anterior.addEventListener('click', () => cargarPanel(nombre, respuesta.pagina - 1));
+      siguiente.addEventListener('click', () => cargarPanel(nombre, respuesta.pagina + 1));
+      pie.replaceChildren(anterior,
+        crear('span', 'tabla-hint', 'Página ' + respuesta.pagina + ' de ' + respuesta.paginas + ' · ' + respuesta.total + ' en total'),
+        siguiente);
+    }
+
+    // Filtros: el texto busca mientras se escribe (con una pequeña espera), los selectores al cambiar
+    Object.keys(PANELES).forEach((nombre) => {
+      const barra = document.querySelector('[data-panel="' + nombre + '"]');
+      if (!barra) return;
+      let espera;
+      barra.querySelectorAll('[data-filtro]').forEach((campo) => {
+        campo.addEventListener(campo.tagName === 'SELECT' ? 'change' : 'input', () => {
+          clearTimeout(espera);
+          espera = setTimeout(() => cargarPanel(nombre, 1), campo.tagName === 'SELECT' ? 0 : 300);
+        });
+      });
     });
-  });
 
-  document.querySelectorAll('[data-action="suspender-usuario"]').forEach((boton) => {
-    boton.addEventListener('click', () => {
-      const fila = boton.closest('.admin-tabla-fila');
-      const nombre = fila.querySelector('.admin-user-nombre').textContent;
-      if (!confirm('¿Suspender a ' + nombre + '?')) return;
+    // Se llama desde mostrarVista(): la primera vez que se abre una lista, se pide al servidor
+    alMostrarVista = (vista) => {
+      if (PANELES[vista] && !estadoPaneles[vista]) cargarPanel(vista, 1);
+    };
 
-      const badge = fila.querySelector('.badge');
-      badge.textContent = 'Suspendido';
-      badge.classList.remove('estado-verde');
-      badge.classList.add('estado-rojo');
+    async function cambiarEstadoUsuario(usuario, activar, boton) {
+      const pregunta = activar
+        ? '¿Reactivar a ' + usuario.nombre_completo + '?'
+        : '¿Suspender a ' + usuario.nombre_completo + '? No va a poder iniciar sesión hasta que lo reactives.';
+      if (!confirm(pregunta)) return;
 
-      // Una vez suspendido, la única acción posible pasa a ser eliminar (igual que en el mockup original)
-      boton.dataset.action = 'eliminar-usuario';
-      boton.title = 'Eliminar';
-      boton.setAttribute('aria-label', 'Eliminar');
-      boton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-      boton.addEventListener('click', manejarEliminarUsuario);
+      boton.disabled = true;
+      const datos = new FormData();
+      datos.set('accion', 'estado_usuario');
+      datos.set('usuario_id', usuario.id);
+      datos.set('activo', activar ? '1' : '0');
+      datos.set('csrf', tokenCsrf);
+      const respuesta = await pedirJson('api/admin.php', { method: 'POST', body: datos });
+      boton.disabled = false;
 
-      mostrarToast('Usuario suspendido');
-    });
-  });
+      mostrarToast(respuesta.mensajes.join(' '));
+      if (!respuesta.ok) return;
 
-  function manejarEliminarUsuario(evento) {
-    const boton = evento.currentTarget;
-    const fila = boton.closest('.admin-tabla-fila');
-    const nombre = fila.querySelector('.admin-user-nombre').textContent;
-    if (!confirm('¿Eliminar a ' + nombre + ' definitivamente? Esta acción no se puede deshacer.')) return;
-
-    eliminarFila(fila);
-    restarStat('Usuarios registrados');
-    mostrarToast('Usuario eliminado');
+      // Actualiza el número del dashboard y vuelve a pedir la lista (el estado quedó guardado en el servidor)
+      Object.entries(respuesta.resumen).forEach(([campo, valor]) => {
+        document.querySelectorAll('[data-resumen="' + campo + '"]').forEach((n) => { n.textContent = valor; });
+      });
+      cargarPanel('usuarios');
+      if (estadoPaneles.auditoria) estadoPaneles.auditoria = null; // la próxima vez que se abra se recarga con la acción nueva
+    }
   }
-  document.querySelectorAll('[data-action="eliminar-usuario"]').forEach((boton) => {
-    boton.addEventListener('click', manejarEliminarUsuario);
-  });
-
-  // ===== TABLA DE TORNEOS (ver / eliminar) =====
-  document.querySelectorAll('[data-action="ver-torneo"]').forEach((boton) => {
-    boton.addEventListener('click', () => {
-      window.location.href = 'detalle.php';
-    });
-  });
-
-  document.querySelectorAll('[data-action="eliminar-torneo"]').forEach((boton) => {
-    boton.addEventListener('click', () => {
-      const fila = boton.closest('.admin-tabla-fila');
-      const nombre = fila.querySelector('.admin-user-nombre').textContent;
-      if (!confirm('¿Eliminar el torneo "' + nombre + '"? Esta acción no se puede deshacer.')) return;
-
-      eliminarFila(fila);
-      restarStat('Torneos activos');
-      mostrarToast('Torneo eliminado');
-    });
-  });
-
-  // ===== MÓDULOS DE COMPETENCIA (habilitar / deshabilitar) =====
-  document.querySelectorAll('.admin-toggle input[data-modulo]').forEach((toggle) => {
-    toggle.addEventListener('change', () => {
-      const nombreModulo = toggle.dataset.modulo;
-      mostrarToast('Módulo "' + nombreModulo + '" ' + (toggle.checked ? 'activado' : 'desactivado'));
-    });
-  });
 
   // ===== FILTRADO Y PAGINACIÓN DE TORNEOS (busqueda.html) =====
   const filtroDeporte = document.querySelector('#filtroDeporte');
@@ -998,23 +1150,91 @@ document.addEventListener('DOMContentLoaded', () => {
     actualizarCategoriaGenero(); // estado inicial
   }
 
-  // "Jugadores por equipo" solo aplica si la modalidad es "equipos"
-  const radiosModalidad = document.querySelectorAll('input[name="modalidad"]');
-  const grupoJugadoresPorEquipo = document.querySelector('#grupoJugadoresPorEquipo');
+  // Fechas de crear torneo: apertura -> cierre de inscripciones -> inicio -> fin. Cada una
+  // no puede ser anterior a la anterior (el servidor lo vuelve a controlar).
+  const cadenaFechas = ['#fecha-inicio-inscripcion', '#fecha-cierre-inscripcion', '#fecha-inicio-torneo', '#fecha-fin-torneo']
+    .map((selector) => document.querySelector(selector));
 
-  if (radiosModalidad.length && grupoJugadoresPorEquipo) {
-    const inputJugadoresPorEquipo = document.querySelector('#jugadores_por_equipo');
+  if (cadenaFechas.every(Boolean)) {
+    const minimoOriginal = cadenaFechas.map((campo) => campo.min);
 
-    function actualizarCamposModalidad() {
-      const seleccionado = document.querySelector('input[name="modalidad"]:checked');
-      const esEquipos = seleccionado && seleccionado.value === 'equipos';
-      grupoJugadoresPorEquipo.style.display = esEquipos ? '' : 'none';
-      // Si no es por equipos, sacamos el required para que no bloquee el envío de un campo oculto
-      if (inputJugadoresPorEquipo) inputJugadoresPorEquipo.required = esEquipos;
+    function encadenarFechas() {
+      cadenaFechas.forEach((campo, i) => {
+        if (i === 0) return;
+        const anterior = cadenaFechas[i - 1].value;
+        campo.min = anterior && anterior > minimoOriginal[i] ? anterior : minimoOriginal[i];
+        if (campo.value && campo.value < campo.min) campo.value = '';
+      });
     }
 
-    radiosModalidad.forEach((radio) => radio.addEventListener('change', actualizarCamposModalidad));
-    actualizarCamposModalidad(); // estado inicial
+    cadenaFechas.forEach((campo) => campo.addEventListener('change', encadenarFechas));
+    encadenarFechas();
+  }
+
+  // La modalidad y el tamaño de los equipos salen del deporte elegido (cada <option> trae
+  // data-jugadores desde la tabla deportes). Con "Otro" (data-libre="1") se pide el nombre
+  // del juego y el tamaño a mano.
+  const selectDeporte = document.querySelector('#deporte');
+  const infoModalidad = document.querySelector('#infoModalidad');
+
+  if (selectDeporte && infoModalidad) {
+    const grupoOtro   = document.querySelector('#grupoDeporteOtro');
+    const inputOtro   = document.querySelector('#deporte_otro');
+    const inputJugOtro = document.querySelector('#jugadores_otro');
+
+    function actualizarInfoModalidad() {
+      const opcion = selectDeporte.options[selectDeporte.selectedIndex];
+      const esLibre = !!opcion && opcion.dataset.libre === '1';
+
+      if (grupoOtro) {
+        grupoOtro.style.display = esLibre ? '' : 'none';
+        if (inputOtro) inputOtro.required = esLibre;
+        if (inputJugOtro) inputJugOtro.required = esLibre;
+      }
+
+      let jugadores = opcion ? parseInt(opcion.dataset.jugadores, 10) : NaN;
+      let nombre = opcion ? opcion.textContent.trim() : '';
+
+      if (esLibre) {
+        jugadores = inputJugOtro ? parseInt(inputJugOtro.value, 10) : NaN;
+        nombre = (inputOtro && inputOtro.value.trim()) || 'El juego';
+        if (!jugadores) {
+          infoModalidad.textContent = 'Escribí el nombre del juego e indicá cuántos jugadores lleva cada equipo.';
+          return;
+        }
+      }
+
+      if (!jugadores) {
+        infoModalidad.textContent = 'Se define según el deporte que elijas.';
+        return;
+      }
+      infoModalidad.textContent = jugadores === 1
+        ? 'Individual: ' + nombre + ' se juega de a uno.'
+        : 'Por equipos: ' + nombre + ' se juega en equipos de ' + jugadores + ' jugadores.';
+    }
+
+    selectDeporte.addEventListener('change', actualizarInfoModalidad);
+    if (inputOtro) inputOtro.addEventListener('input', actualizarInfoModalidad);
+    if (inputJugOtro) inputJugOtro.addEventListener('input', actualizarInfoModalidad);
+    actualizarInfoModalidad(); // estado inicial
+  }
+
+  // Mis equipos: si el deporte elegido es "Otro" (tamaño libre), se piden el nombre del juego y el tamaño.
+  const selectDeporteEquipo = document.querySelector('#deporteEquipo');
+  const grupoOtroEquipo = document.querySelector('#grupoOtroEquipo');
+
+  if (selectDeporteEquipo && grupoOtroEquipo) {
+    const camposOtroEquipo = grupoOtroEquipo.querySelectorAll('input');
+
+    function actualizarOtroEquipo() {
+      const opcion = selectDeporteEquipo.options[selectDeporteEquipo.selectedIndex];
+      const esLibre = !!opcion && opcion.dataset.libre === '1';
+      grupoOtroEquipo.style.display = esLibre ? '' : 'none';
+      camposOtroEquipo.forEach((campo) => { campo.required = esLibre; });
+    }
+
+    selectDeporteEquipo.addEventListener('change', actualizarOtroEquipo);
+    actualizarOtroEquipo(); // estado inicial
   }
 
   // Formulario grande, con validación HTML5 (required, pattern) ya puesta en el markup.
@@ -1205,6 +1425,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'Fútbol 5':          { icono: 'fa-futbol',                   color: '#2f8f3e' },
     'Básquetbol':        { icono: 'fa-basketball',               color: '#b84a00' },
     'Tenis':             { icono: 'fa-table-tennis-paddle-ball', color: '#3a6b1a' },
+    'Tenis dobles':      { icono: 'fa-table-tennis-paddle-ball', color: '#4a7d22' },
     'Pádel':             { icono: 'fa-table-tennis-paddle-ball', color: '#1f7a5c' },
     'Ping pong':         { icono: 'fa-table-tennis-paddle-ball', color: '#0d6e6e' },
     'Ajedrez':           { icono: 'fa-chess',                    color: '#2c2c2c' },
@@ -1238,604 +1459,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   aplicarTemaDeporte();
-
-  // ===== DATOS DE EJEMPLO DE TORNEOS =====
-  // En cuanto conectemos PHP, esto se reemplaza por una consulta real a la
-  // base usando el id de la URL. Por ahora arma detalle.html "a mano" según
-  // qué tarjeta de busqueda.html se haya clickeado (?id=1, ?id=2, etc).
-  const TORNEOS_EJEMPLO = {
-    1: { deporte: 'Fútbol 11', tipo: 'Liga', nombre: 'Mundialito 2026',
-      desc: 'Torneo de fútbol 11 para equipos amateur. Todos contra todos, puntos por resultado. El mejor equipo al final de la temporada se lleva el título.',
-      cupos: '8 equipos',
-      cuposTotales: 8, fecha: '15 jun — 30 ago 2026',
-      badgeClass: 'estado-naranja', badgeIcono: 'fa-circle-play', badgeTexto: 'En curso — Fecha 4',
-      inscripcionEstado: 'en_curso', modalidad: 'equipos', cuposDisponibles: 0 },
-    2: { deporte: 'Ajedrez', tipo: 'Sistema suizo', nombre: 'Torneo de ajedrez UTU',
-      desc: 'Competencia de ajedrez por sistema suizo. Rondas semanales, clasificación acumulada. Abierto a todos los niveles.',
-      cupos: '128 participantes',
-      cuposTotales: 128, fecha: 'Comienza 28 jul 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'individual', cuposDisponibles: 12 },
-    3: { deporte: 'CS2', tipo: 'Eliminación directa', nombre: 'CS:2 Gaming Cup',
-      desc: 'Copa de Counter-Strike 2 en formato eliminación directa. 16 equipos, llaves automáticas. Torneo ya finalizado.',
-      cupos: '16 equipos',
-      cuposTotales: 16, fecha: 'Finalizó 20 jun 2026',
-      badgeClass: 'estado-rojo', badgeIcono: 'fa-flag-checkered', badgeTexto: 'Finalizado',
-      inscripcionEstado: 'finalizado', modalidad: 'equipos', cuposDisponibles: 0 },
-    4: { deporte: 'Básquetbol', tipo: 'Liga', nombre: 'Liga Barrial de Básquet 2026',
-      desc: 'Liga de básquetbol barrial, abierta a equipos de todo Montevideo. Todos contra todos a lo largo de la temporada.',
-      cupos: '8 equipos',
-      cuposTotales: 8, fecha: '1 jul — 15 sep 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 3 },
-    5: { deporte: 'Valorant', tipo: 'Eliminación directa', nombre: 'Valorant Open UY',
-      desc: 'Torneo abierto de Valorant para equipos uruguayos. Cupos limitados, llaves de eliminación directa.',
-      cupos: '32 equipos',
-      cuposTotales: 32, fecha: 'Comienza 10 jul 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 8 },
-    6: { deporte: 'Tenis', tipo: 'Eliminación directa', nombre: 'Copa Tenis Arias 2025',
-      desc: 'Torneo de tenis individual, categorías A y B. Torneo ya finalizado.',
-      cupos: '24 participantes',
-      cuposTotales: 24, fecha: 'Oct — Nov 2025',
-      badgeClass: 'estado-rojo', badgeIcono: 'fa-flag-checkered', badgeTexto: 'Finalizado',
-      inscripcionEstado: 'finalizado', modalidad: 'individual', cuposDisponibles: 0 },
-    7: { deporte: 'Fútbol 5', tipo: 'Sistema suizo', nombre: 'Copa Fútbol 5 Ciudad Vieja',
-      desc: 'Torneo de fútbol 5 entre equipos del barrio Ciudad Vieja. Formato suizo a 5 rondas, clasificación acumulada.',
-      cupos: '12 equipos',
-      cuposTotales: 12, fecha: 'Comienza 5 ago 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 4 },
-    8: { deporte: 'Pádel', tipo: 'Eliminación directa', nombre: 'Open de Pádel Punta Carretas',
-      desc: 'Torneo de pádel en parejas, eliminación directa desde octavos de final.',
-      cupos: '16 parejas',
-      cuposTotales: 16, fecha: 'En curso — Fecha 2',
-      badgeClass: 'estado-naranja', badgeIcono: 'fa-circle-play', badgeTexto: 'En curso — Fecha 2',
-      inscripcionEstado: 'en_curso', modalidad: 'equipos', cuposDisponibles: 0 },
-    9: { deporte: 'Ping pong', tipo: 'Liga', nombre: 'Liga de Ping Pong ITS',
-      desc: 'Liga interna de ping pong entre estudiantes del instituto. Todos contra todos.',
-      cupos: '10 participantes',
-      cuposTotales: 10, fecha: 'Comienza 12 ago 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'individual', cuposDisponibles: 6 },
-    10: { deporte: 'Truco', tipo: 'Sistema suizo', nombre: 'Torneo de Truco Amistoso',
-      desc: 'Competencia de truco en parejas, sistema suizo, clasificación por puntos acumulados.',
-      cupos: '20 parejas',
-      cuposTotales: 20, fecha: 'Comienza 20 ago 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 10 },
-    11: { deporte: 'Damas', tipo: 'Eliminación directa', nombre: 'Copa Damas Clásicas',
-      desc: 'Torneo de damas 1 contra 1, eliminación directa a partido único. Torneo ya finalizado.',
-      cupos: '32 participantes',
-      cuposTotales: 32, fecha: 'Finalizó 5 may 2026',
-      badgeClass: 'estado-rojo', badgeIcono: 'fa-flag-checkered', badgeTexto: 'Finalizado',
-      inscripcionEstado: 'finalizado', modalidad: 'individual', cuposDisponibles: 0 },
-    12: { deporte: 'League of Legends', tipo: 'Liga', nombre: 'LoL PrimeCup Season 1',
-      desc: 'Liga de League of Legends 5 contra 5 entre equipos amateurs. Formato todos contra todos.',
-      cupos: '10 equipos',
-      cuposTotales: 10, fecha: 'En curso — Fecha 6',
-      badgeClass: 'estado-naranja', badgeIcono: 'fa-circle-play', badgeTexto: 'En curso — Fecha 6',
-      inscripcionEstado: 'en_curso', modalidad: 'equipos', cuposDisponibles: 0 },
-    13: { deporte: 'Fortnite', tipo: 'Eliminación directa', nombre: 'Fortnite Solo Showdown',
-      desc: 'Torneo de Fortnite en modalidad solo, eliminación directa por puntaje acumulado.',
-      cupos: '50 participantes',
-      cuposTotales: 50, fecha: 'Comienza 18 ago 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'individual', cuposDisponibles: 12 },
-    14: { deporte: 'Rocket League', tipo: 'Sistema suizo', nombre: 'Rocket League 3v3 Cup',
-      desc: 'Torneo de Rocket League en equipos de 3, sistema suizo por rendimiento.',
-      cupos: '12 equipos',
-      cuposTotales: 12, fecha: 'Comienza 25 ago 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 2 },
-    15: { deporte: 'Otro', tipo: 'Liga', nombre: 'Torneo Libre Multideporte',
-      desc: 'Espacio para competencias que no encajan en las categorías tradicionales. Formato todos contra todos.',
-      cupos: '6 equipos',
-      cuposTotales: 6, fecha: 'Comienza 1 sep 2026',
-      badgeClass: 'estado-verde', badgeIcono: 'fa-circle-check', badgeTexto: 'Inscripciones abiertas',
-      inscripcionEstado: 'abierta', modalidad: 'equipos', cuposDisponibles: 6 },
-  };
-
-  // ===== TABLA DE POSICIONES POR TORNEO =====
-  // Solo tienen datos los torneos que ya arrancaron (en_curso o finalizado);
-  // los que todavía están en inscripciones lógicamente no tienen partidos jugados.
-  const TABLAS_POSICIONES = {
-    1: { columna: 'Equipo', filas: [
-      { nombre: 'Los Cañones FC', pj: 3, pts: 9 },
-      { nombre: 'Atlético Barrio Sur', pj: 3, pts: 7 },
-      { nombre: 'Villa Española B', pj: 3, pts: 6 },
-      { nombre: 'Rampla Juniors C', pj: 3, pts: 4 },
-      { nombre: 'Cerro de las Rosas', pj: 3, pts: 4 },
-      { nombre: 'Deportivo Sayago', pj: 3, pts: 3 },
-      { nombre: 'Unidos del Norte', pj: 3, pts: 1 },
-      { nombre: 'Juventud Unida FC', pj: 3, pts: 0 },
-    ]},
-    3: { columna: 'Equipo', filas: [
-      { nombre: 'Ghost Squad', pj: 4, pts: 12 },
-      { nombre: 'Nova Esports', pj: 4, pts: 9 },
-      { nombre: 'Team Alpha', pj: 3, pts: 6 },
-      { nombre: 'Delta Force UY', pj: 3, pts: 6 },
-    ]},
-    6: { columna: 'Participante', filas: [
-      { nombre: 'Martina Ríos', pj: 5, pts: 5 },
-      { nombre: 'Bruno Acosta', pj: 5, pts: 4 },
-      { nombre: 'Sofía Batista', pj: 4, pts: 3 },
-      { nombre: 'Lucas Ferreira', pj: 4, pts: 2 },
-    ]},
-    8: { columna: 'Pareja', filas: [
-      { nombre: 'Fernández / Silva', pj: 2, pts: 6 },
-      { nombre: 'Gómez / Techera', pj: 2, pts: 4 },
-      { nombre: 'Correa / Núñez', pj: 2, pts: 3 },
-      { nombre: 'Ramos / Vidal', pj: 2, pts: 1 },
-    ]},
-    11: { columna: 'Participante', filas: [
-      { nombre: 'Diego Pereyra', pj: 5, pts: 5 },
-      { nombre: 'Valentina Cruz', pj: 5, pts: 4 },
-      { nombre: 'Emilia Sosa', pj: 4, pts: 3 },
-      { nombre: 'Nicolás Bentancor', pj: 4, pts: 2 },
-    ]},
-    12: { columna: 'Equipo', filas: [
-      { nombre: 'Dragones del Sur', pj: 6, pts: 15 },
-      { nombre: 'Fénix Gaming', pj: 6, pts: 12 },
-      { nombre: 'Lobos Nocturnos', pj: 6, pts: 9 },
-      { nombre: 'Titanes UY', pj: 6, pts: 6 },
-    ]},
-  };
-
-  function renderTablaPosiciones(idTorneo) {
-    const seccion = document.querySelector('#seccionTablaPosiciones');
-    const tbody = document.querySelector('#tablaPosicionesBody');
-    if (!seccion || !tbody) return;
-
-    const wrap = seccion.querySelector('.tabla-wrap');
-    const leyenda = seccion.querySelector('.tabla-leyenda');
-    const datos = TABLAS_POSICIONES[idTorneo];
-
-    // Sin datos todavía (el torneo no arrancó): ocultamos la tabla y mostramos un aviso
-    let aviso = seccion.querySelector('.tabla-sin-datos');
-    if (!datos) {
-      wrap.style.display = 'none';
-      leyenda.style.display = 'none';
-      if (!aviso) {
-        aviso = document.createElement('p');
-        aviso.className = 'tabla-sin-datos';
-        seccion.appendChild(aviso);
-      }
-      aviso.textContent = 'Este torneo todavía no comenzó — la tabla se arma cuando se juegue la primera fecha.';
-      return;
-    }
-
-    wrap.style.display = '';
-    leyenda.style.display = '';
-    if (aviso) aviso.remove();
-
-    const columnaHeader = document.querySelector('#tablaColumnaNombre');
-    if (columnaHeader) columnaHeader.textContent = datos.columna;
-
-    tbody.innerHTML = '';
-    datos.filas.forEach((fila, indice) => {
-      const posicion = indice + 1;
-      const tr = document.createElement('tr');
-      if (posicion === 1) tr.className = 'tabla-lider';
-      const claseNum = posicion <= 3 ? 'pos-num pos-' + posicion : 'pos-num';
-
-      tr.innerHTML =
-        '<td class="tabla-pos"><span class="' + claseNum + '">' + posicion + '</span></td>' +
-        '<td class="tabla-equipo">' + fila.nombre + '</td>' +
-        '<td>' + fila.pj + '</td>' +
-        '<td class="tabla-pts"><strong>' + fila.pts + '</strong></td>';
-      tbody.appendChild(tr);
-    });
-  }
-
-  function renderParticipantes(idTorneo, torneo) {
-    const grid = document.querySelector('#participantesGrid');
-    const titulo = document.querySelector('#participantesTitulo');
-    const cuposLabel = document.querySelector('#participantesCuposLabel');
-    if (!grid) return;
-
-    const esEquipos = torneo.modalidad === 'equipos';
-    const etiqueta = esEquipos ? 'Equipos participantes' : 'Participantes';
-    if (titulo) titulo.innerHTML = '<i class="fa-solid fa-users"></i> ' + etiqueta;
-
-    const tema = TEMAS_DEPORTE[torneo.deporte] || TEMAS_DEPORTE['Otro'];
-    const datosTabla = TABLAS_POSICIONES[idTorneo];
-
-    let nombres;
-    if (datosTabla) {
-      // Ya hay tabla de posiciones armada: son los mismos equipos/jugadores
-      nombres = datosTabla.filas.map((fila) => fila.nombre);
-    } else {
-      // Todavía no hay lista real: generamos nombres genéricos según cuántos cupos ya se ocuparon
-      const yaInscriptos = torneo.cuposTotales - torneo.cuposDisponibles;
-      const base = esEquipos ? 'Equipo' : 'Participante';
-      nombres = [];
-      for (let i = 1; i <= yaInscriptos; i++) nombres.push(base + ' ' + i);
-    }
-
-    if (cuposLabel) {
-      cuposLabel.textContent = nombres.length + ' / ' + torneo.cuposTotales + ' inscriptos';
-    }
-
-    grid.innerHTML = '';
-    if (nombres.length === 0) {
-      grid.innerHTML = '<p class="tabla-sin-datos">Todavía no hay inscriptos. ¡Sé el primero!</p>';
-      return;
-    }
-
-    nombres.forEach((nombre) => {
-      const item = document.createElement('div');
-      item.className = 'participante-item';
-      item.innerHTML = '<i class="fa-solid ' + tema.icono + '"></i> ' + nombre;
-      grid.appendChild(item);
-    });
-  }
-
-  // Arma los enfrentamientos de "todos contra todos" (metodo del circulo),
-  // a partir de una lista de nombres. Es el mismo algoritmo que va a necesitar
-  // el modulo de Liga cuando se implemente la generacion automatica en PHP.
-  function generarRoundRobin(nombres) {
-    const lista = nombres.slice();
-    if (lista.length % 2 !== 0) lista.push(null); // equipo libre ("bye") si son impares
-    const n = lista.length;
-    const rondas = [];
-
-    for (let r = 0; r < n - 1; r++) {
-      const partidosRonda = [];
-      for (let i = 0; i < n / 2; i++) {
-        const local = lista[i];
-        const visitante = lista[n - 1 - i];
-        if (local !== null && visitante !== null) {
-          partidosRonda.push({ local, visitante });
-        }
-      }
-      rondas.push(partidosRonda);
-      lista.splice(1, 0, lista.pop()); // rota todos menos el primero
-    }
-    return rondas;
-  }
-
-  // ---- Arma el hero de detalle.html según el ?id= de la URL ----
-  const detalleTitulo = document.querySelector('#detalleTitulo');
-  let idTorneoActual = 1; // por defecto, usado también por la tarjeta de inscripción más abajo
-  if (detalleTitulo) {
-    const parametros = new URLSearchParams(window.location.search);
-    idTorneoActual = Number(parametros.get('id')) || 1;
-    const torneo = TORNEOS_EJEMPLO[idTorneoActual] || TORNEOS_EJEMPLO[1];
-
-    document.querySelector('#detalleCategoria').textContent = torneo.deporte + ' · ' + torneo.tipo;
-    detalleTitulo.textContent = torneo.nombre;
-    document.querySelector('#detalleDesc').textContent = torneo.desc;
-    document.querySelector('#detalleMetaFecha').textContent = torneo.fecha;
-    document.querySelector('#detalleMetaCupos').textContent = torneo.cupos;
-    document.title = torneo.nombre + ' — PrimeCup';
-
-    const heroImg = document.querySelector('.detalle-hero-img');
-    if (heroImg) heroImg.dataset.deporte = torneo.deporte;
-
-    const heroAccion = document.querySelector('#detalleHeroAccion');
-    if (heroAccion) {
-      heroAccion.innerHTML =
-        '<span class="badge ' + torneo.badgeClass + '" style="margin-top:0; font-size: 13px; padding: 5px 14px;">' +
-        '<i class="fa-solid ' + torneo.badgeIcono + '"></i> ' + torneo.badgeTexto +
-        '</span>';
-    }
-
-    // Le pasamos el estado real a la tarjeta de inscripción, antes de que se arme
-    const cajaInscripcionPrevia = document.querySelector('#detalleInscripcion');
-    if (cajaInscripcionPrevia) {
-      cajaInscripcionPrevia.dataset.estado = torneo.inscripcionEstado;
-      cajaInscripcionPrevia.dataset.modalidad = torneo.modalidad;
-      cajaInscripcionPrevia.dataset.cuposDisponibles = torneo.cuposDisponibles;
-    }
-
-    aplicarTemaDeporte(); // reaplicamos ahora que el ícono/color ya corresponde al deporte real
-    renderTablaPosiciones(idTorneoActual);
-    renderParticipantes(idTorneoActual, torneo);
-  }
-
-  // ---- Calendario completo (fechas.html): arma el fixture con el generador round-robin ----
-  const fechasContenedor = document.querySelector('#fechasContenedor');
-  if (fechasContenedor) {
-    const parametros = new URLSearchParams(window.location.search);
-    const idTorneo = Number(parametros.get('id')) || 1;
-    const torneo = TORNEOS_EJEMPLO[idTorneo] || TORNEOS_EJEMPLO[1];
-    const datosTabla = TABLAS_POSICIONES[idTorneo];
-
-    const linkVolver = document.querySelector('#fechasVolverLink');
-    if (linkVolver) linkVolver.href = 'detalle.php?id=' + idTorneo;
-
-    const subtitulo = document.querySelector('#fechasSubtitulo');
-
-    if (!datosTabla) {
-      // El torneo todavía está en inscripciones: no hay fixture generado todavía
-      if (subtitulo) subtitulo.textContent = torneo.nombre + ' · ' + torneo.deporte + ' · ' + torneo.tipo;
-      fechasContenedor.innerHTML =
-        '<p class="tabla-sin-datos">Este torneo todavía está en inscripciones — el fixture se genera ' +
-        'automáticamente apenas cierren.</p>';
-      ['fechasStatJugadas', 'fechasStatEnCurso', 'fechasStatPendientes', 'fechasStatPartidos'].forEach((id) => {
-        const el = document.querySelector('#' + id);
-        if (el) el.textContent = '0';
-      });
-    } else {
-      const nombres = datosTabla.filas.map((fila) => fila.nombre);
-      const rondas = generarRoundRobin(nombres);
-
-      // Cuántas fechas ya se jugaron: usamos el "pj" del primero de la tabla como referencia
-      const fechasJugadas = Math.min(datosTabla.filas[0].pj, rondas.length);
-      const hayFechaEnCurso = torneo.inscripcionEstado === 'en_curso' && fechasJugadas < rondas.length;
-
-      if (subtitulo) {
-        subtitulo.textContent =
-          torneo.nombre + ' · ' + torneo.deporte + ' · ' + torneo.tipo + ' · ' +
-          nombres.length + (torneo.modalidad === 'equipos' ? ' equipos' : ' participantes') +
-          ' · ' + rondas.length + ' fechas';
-      }
-
-      let totalPartidosJugados = 0;
-      fechasContenedor.innerHTML = '';
-
-      rondas.forEach((partidos, indice) => {
-        const numeroFecha = indice + 1;
-        const esJugada = numeroFecha <= fechasJugadas;
-        const esEnCurso = hayFechaEnCurso && numeroFecha === fechasJugadas + 1;
-
-        const seccion = document.createElement('section');
-        seccion.className = 'perfil-seccion';
-
-        const badge = esJugada
-          ? '<span class="badge estado-verde">Jugada</span>'
-          : esEnCurso
-            ? '<span class="badge estado-naranja">En curso</span>'
-            : '<span class="badge estado-gris">Pendiente</span>';
-
-        let partidosHtml = '';
-        partidos.forEach((partido) => {
-          if (esJugada) {
-            const marcadorLocal = Math.floor(Math.random() * 5);
-            const marcadorVisitante = Math.floor(Math.random() * 5);
-            totalPartidosJugados++;
-            partidosHtml +=
-              '<div class="partido">' +
-              '<div class="partido-equipo partido-local">' + partido.local + '</div>' +
-              '<div class="partido-resultado">' +
-              '<span class="resultado-num">' + marcadorLocal + '</span>' +
-              '<span class="resultado-sep">-</span>' +
-              '<span class="resultado-num">' + marcadorVisitante + '</span>' +
-              '</div>' +
-              '<div class="partido-equipo partido-visitante">' + partido.visitante + '</div>' +
-              '</div>';
-          } else {
-            partidosHtml +=
-              '<div class="partido partido-pendiente">' +
-              '<div class="partido-equipo partido-local">' + partido.local + '</div>' +
-              '<div class="partido-resultado partido-resultado-pendiente"><span class="resultado-sep">vs</span></div>' +
-              '<div class="partido-equipo partido-visitante">' + partido.visitante + '</div>' +
-              '</div>';
-          }
-        });
-
-        seccion.innerHTML =
-          '<div class="seccion-header"><h2 class="seccion-titulo">Fecha ' + numeroFecha + '</h2>' + badge + '</div>' +
-          '<div class="partidos-lista">' + partidosHtml + '</div>';
-
-        fechasContenedor.appendChild(seccion);
-      });
-
-      const statJugadas = document.querySelector('#fechasStatJugadas');
-      const statEnCurso = document.querySelector('#fechasStatEnCurso');
-      const statPendientes = document.querySelector('#fechasStatPendientes');
-      const statPartidos = document.querySelector('#fechasStatPartidos');
-      if (statJugadas) statJugadas.textContent = fechasJugadas;
-      if (statEnCurso) statEnCurso.textContent = hayFechaEnCurso ? '1' : '0';
-      if (statPendientes) statPendientes.textContent = rondas.length - fechasJugadas - (hayFechaEnCurso ? 1 : 0);
-      if (statPartidos) statPartidos.textContent = totalPartidosJugados;
-    }
-  }
-
-  // ---- Tarjeta de inscripción a un torneo (detalle.html) ----
-  const inscripcionBox = document.querySelector('#detalleInscripcion');
-  if (inscripcionBox) {
-    let yaInscripto = false; // se pierde al recargar: es solo para simular la interacción sin backend
-
-    function renderInscripcion() {
-      const estado = inscripcionBox.dataset.estado;               // 'abierta' | 'en_curso' | 'finalizado'
-      const modalidad = inscripcionBox.dataset.modalidad;         // 'individual' | 'equipos'
-      const cupos = Number(inscripcionBox.dataset.cuposDisponibles);
-
-      inscripcionBox.classList.remove('cerrado', 'inscripto');
-
-      if (yaInscripto) {
-        inscripcionBox.classList.add('inscripto');
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-circle-check"></i> Ya estás inscripto en este torneo.' +
-          '</div>';
-        return;
-      }
-
-      if (estado === 'en_curso') {
-        inscripcionBox.classList.add('cerrado');
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-lock"></i> Las inscripciones para este torneo ya cerraron.' +
-          '</div>';
-        return;
-      }
-
-      if (estado === 'finalizado') {
-        inscripcionBox.classList.add('cerrado');
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-flag-checkered"></i> Este torneo ya finalizó.' +
-          '</div>';
-        return;
-      }
-
-      // A partir de acá, estado === 'abierta'
-      if (cupos <= 0) {
-        inscripcionBox.classList.add('cerrado');
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-triangle-exclamation"></i> No quedan cupos disponibles.' +
-          '</div>';
-        return;
-      }
-
-      if (modalidad === 'individual') {
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-circle-info"></i> Inscripciones abiertas — ' + cupos + ' cupos disponibles.' +
-          '</div>' +
-          '<div class="detalle-inscripcion-acciones">' +
-          '<button type="button" class="btn-primary" id="btnInscribirme">' +
-          '<i class="fa-solid fa-user-plus"></i> Inscribirme</button>' +
-          '</div>';
-        document.querySelector('#btnInscribirme').addEventListener('click', inscribirseIndividual);
-      } else {
-        inscripcionBox.innerHTML =
-          '<div class="detalle-inscripcion-texto">' +
-          '<i class="fa-solid fa-circle-info"></i> Inscripciones abiertas — ' + cupos + ' cupos disponibles.' +
-          '</div>' +
-          '<div class="detalle-inscripcion-acciones">' +
-          '<button type="button" class="btn" id="btnUnirmeEquipo">' +
-          '<i class="fa-solid fa-user-group"></i> Unirme a un equipo</button>' +
-          '<button type="button" class="btn-primary" id="btnCrearEquipo">' +
-          '<i class="fa-solid fa-plus"></i> Crear equipo</button>' +
-          '</div>';
-        document.querySelector('#btnUnirmeEquipo').addEventListener('click', unirseAEquipo);
-        document.querySelector('#btnCrearEquipo').addEventListener('click', crearEquipo);
-      }
-    }
-
-    function inscribirseIndividual() {
-      if (!confirm('¿Confirmás tu inscripción a este torneo?')) return;
-      yaInscripto = true;
-      mostrarToast('¡Te inscribiste al torneo!');
-      renderInscripcion();
-    }
-
-    function crearEquipo() {
-      inscripcionBox.classList.add('expandido');
-      inscripcionBox.innerHTML =
-        '<div class="form-equipo">' +
-        '<div class="form-group">' +
-        '<label class="form-label-p" for="nombreEquipoNuevo">Nombre del equipo</label>' +
-        '<input type="text" id="nombreEquipoNuevo" class="form-input-p" placeholder="Ej: Los Tigres" />' +
-        '</div>' +
-        '<div class="form-group">' +
-        '<label class="form-label-p">Integrantes</label>' +
-        '<div class="lista-integrantes" id="listaIntegrantes">' +
-        '<div class="integrante-fila">' +
-        '<input type="text" class="form-input-p integrante-input" placeholder="Nombre del integrante" />' +
-        '</div>' +
-        '</div>' +
-        '<button type="button" class="btn-agregar-integrante" id="btnAgregarIntegrante">' +
-        '<i class="fa-solid fa-plus"></i> Agregar integrante</button>' +
-        '</div>' +
-        '<div class="form-equipo-acciones">' +
-        '<button type="button" class="btn" id="btnCancelarEquipo">Cancelar</button>' +
-        '<button type="button" class="btn-primary" id="btnConfirmarEquipo">' +
-        '<i class="fa-solid fa-check"></i> Crear e inscribir equipo</button>' +
-        '</div>' +
-        '</div>';
-
-      document.querySelector('#btnAgregarIntegrante').addEventListener('click', () => {
-        const lista = document.querySelector('#listaIntegrantes');
-        const fila = document.createElement('div');
-        fila.className = 'integrante-fila';
-        fila.innerHTML =
-          '<input type="text" class="form-input-p integrante-input" placeholder="Nombre del integrante" />' +
-          '<button type="button" class="btn-quitar-integrante" aria-label="Quitar"><i class="fa-solid fa-xmark"></i></button>';
-        lista.appendChild(fila);
-        fila.querySelector('.btn-quitar-integrante').addEventListener('click', () => fila.remove());
-      });
-
-      document.querySelector('#btnCancelarEquipo').addEventListener('click', () => {
-        inscripcionBox.classList.remove('expandido');
-        renderInscripcion();
-      });
-
-      document.querySelector('#btnConfirmarEquipo').addEventListener('click', () => {
-        const nombreEquipo = document.querySelector('#nombreEquipoNuevo').value.trim();
-        const integrantes = Array.from(document.querySelectorAll('.integrante-input'))
-          .map((input) => input.value.trim())
-          .filter((valor) => valor !== '');
-
-        if (nombreEquipo === '') {
-          mostrarToast('Ponele un nombre al equipo.');
-          return;
-        }
-        if (integrantes.length === 0) {
-          mostrarToast('Agregá al menos un integrante.');
-          return;
-        }
-
-        yaInscripto = true;
-        inscripcionBox.classList.remove('expandido');
-        mostrarToast('Equipo "' + nombreEquipo + '" creado con ' + integrantes.length +
-          (integrantes.length === 1 ? ' integrante' : ' integrantes') + ' e inscripto al torneo.');
-        renderInscripcion();
-      });
-    }
-
-    function unirseAEquipo() {
-      // Si el torneo ya tiene equipos cargados (tabla de posiciones), ofrecemos elegir entre esos.
-      // Si todavía no hay ninguno, dejamos escribir el nombre a mano.
-      const datosTabla = TABLAS_POSICIONES[idTorneoActual];
-      const equiposExistentes = datosTabla ? datosTabla.filas.map((fila) => fila.nombre) : [];
-
-      inscripcionBox.classList.add('expandido');
-
-      let opcionesHtml = '<option value="">Seleccioná un equipo...</option>';
-      equiposExistentes.forEach((nombre) => {
-        opcionesHtml += '<option value="' + nombre + '">' + nombre + '</option>';
-      });
-
-      inscripcionBox.innerHTML =
-        '<div class="form-equipo">' +
-        '<div class="form-group">' +
-        '<label class="form-label-p" for="tuNombreUnirme">Tu nombre</label>' +
-        '<input type="text" id="tuNombreUnirme" class="form-input-p" placeholder="Nombre y apellido" />' +
-        '</div>' +
-        '<div class="form-group">' +
-        '<label class="form-label-p" for="selectEquipoExistente">Equipo</label>' +
-        (equiposExistentes.length
-          ? '<select id="selectEquipoExistente" class="form-input-p">' + opcionesHtml + '</select>'
-          : '<input type="text" id="selectEquipoExistente" class="form-input-p" placeholder="Nombre o código del equipo" />') +
-        '</div>' +
-        '</div>' +
-        '<div class="form-equipo-acciones">' +
-        '<button type="button" class="btn" id="btnCancelarUnirme">Cancelar</button>' +
-        '<button type="button" class="btn-primary" id="btnConfirmarUnirme">' +
-        '<i class="fa-solid fa-check"></i> Solicitar unirme</button>' +
-        '</div>';
-
-      document.querySelector('#btnCancelarUnirme').addEventListener('click', () => {
-        inscripcionBox.classList.remove('expandido');
-        renderInscripcion();
-      });
-
-      document.querySelector('#btnConfirmarUnirme').addEventListener('click', () => {
-        const tuNombre = document.querySelector('#tuNombreUnirme').value.trim();
-        const equipo = document.querySelector('#selectEquipoExistente').value.trim();
-
-        if (tuNombre === '') {
-          mostrarToast('Ingresá tu nombre.');
-          return;
-        }
-        if (equipo === '') {
-          mostrarToast('Elegí o escribí un equipo.');
-          return;
-        }
-
-        inscripcionBox.classList.remove('expandido');
-        mostrarToast('Solicitud enviada para unirte a "' + equipo + '".');
-        renderInscripcion();
-      });
-    }
-
-    renderInscripcion(); // estado inicial, según los data-* del HTML
-  }
 
 });
