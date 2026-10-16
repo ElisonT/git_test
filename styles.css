@@ -4092,3 +4092,29 @@ a.nav-logo {
 .panel-lista .tabla-sin-datos { padding: 1rem; margin: 0; }
 .panel-pag { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 0.75rem; }
 .panel-pag .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ===== Portada: hero con imagen (Mobile First) ===== */
+.hero-con-imagen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.75rem;
+}
+.hero-con-imagen .hero-texto { width: 100%; }
+.hero-imagen { width: 100%; max-width: 360px; }
+.hero-imagen img { display: block; width: 100%; height: auto; }
+
+@media (min-width: 901px) {
+  .hero-con-imagen {
+    flex-direction: row;
+    justify-content: center;
+    gap: 3rem;
+    padding: 3rem 2rem;
+    text-align: left;
+  }
+  .hero-con-imagen .hero-texto { max-width: 520px; }
+  .hero-con-imagen h1,
+  .hero-con-imagen p { margin-left: 0; margin-right: 0; }
+  .hero-con-imagen .hero-actions { justify-content: flex-start; }
+  .hero-imagen { max-width: 460px; flex-shrink: 0; }
+}

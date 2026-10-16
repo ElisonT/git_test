@@ -160,7 +160,7 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Perfil — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=28" />
+  <link rel="stylesheet" href="styles.css?v=29" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -535,19 +535,19 @@ $miembroDesde  = $meses[(int) $fechaRegistro->format('n')] . ' ' . $fechaRegistr
                   <label class="form-label-p" for="pass-nueva">Nueva contraseña</label>
                   <input
                     type="password" id="pass-nueva" name="pass_nueva" class="form-input-p"
-                    placeholder="Mínimo 8 caracteres" minlength="8"
-                    pattern="(?=.*[A-Z])(?=.*[0-9]).{8,}"
-                    title="Mínimo 8 caracteres, una mayúscula y un número" required
+                    placeholder="Mínimo 8 caracteres" minlength="8" maxlength="72"
+                    pattern="(?=.*\p{Ll})(?=.*\p{Lu})(?=.*[0-9]).{8,}"
+                    title="Entre 8 y 72 caracteres, con una mayúscula, una minúscula y un número" autocomplete="new-password" required
                   />
                 </div>
                 <div class="form-group">
                   <label class="form-label-p" for="pass-confirmar">Confirmar nueva contraseña</label>
-                  <input type="password" id="pass-confirmar" name="pass_confirmar" class="form-input-p" placeholder="Repetí la nueva contraseña" minlength="8" required />
+                  <input type="password" id="pass-confirmar" name="pass_confirmar" class="form-input-p" placeholder="Repetí la nueva contraseña" minlength="8" maxlength="72" autocomplete="new-password" required />
                 </div>
               </div>
               <span class="form-hint-p" style="padding-left: 4px;">
                 <i class="fa-solid fa-circle-info"></i>
-                La contraseña debe tener al menos 8 caracteres, una mayúscula y un número.
+                La contraseña debe tener entre 8 y 72 caracteres, con una mayúscula, una minúscula y un número.
               </span>
               <div class="editar-acciones">
                 <button type="submit" class="btn-primary">Cambiar contraseña</button>

@@ -7,6 +7,7 @@
  * queda en la Vista (register.php / login.php).
  */
 
+require_once __DIR__ . '/../Helpers/contrasena.php';
 require_once __DIR__ . '/../Models/Usuario.php';
 require_once __DIR__ . '/../Models/Auditoria.php';
 
@@ -49,8 +50,8 @@ class UsuarioController
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errores[] = 'El correo electrónico no es válido.';
         }
-        if (strlen($contrasena) < 8) {
-            $errores[] = 'La contraseña debe tener al menos 8 caracteres.';
+        if ($errorClave = errorPoliticaContrasena($contrasena)) {
+            $errores[] = $errorClave;
         }
         if ($contrasena !== $confirmacion) {
             $errores[] = 'Las contraseñas no coinciden.';
@@ -235,8 +236,8 @@ class UsuarioController
             $errores[] = 'La contraseña actual no es correcta.';
         }
 
-        if (!preg_match('/^(?=.*[A-Z])(?=.*[0-9]).{8,}$/', $nueva)) {
-            $errores[] = 'La nueva contraseña debe tener al menos 8 caracteres, una mayúscula y un número.';
+        if ($errorClave = errorPoliticaContrasena($nueva)) {
+            $errores[] = $errorClave;
         }
         if ($nueva !== $confirmar) {
             $errores[] = 'Las contraseñas nuevas no coinciden.';

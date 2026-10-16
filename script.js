@@ -519,6 +519,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }, Math.max(2500, mensaje.length * 70));
   }
 
+  // Política de contraseñas (la misma que app/Helpers/contrasena.php): sirve para avisar rápido;
+  // la validación que cuenta es la del servidor.
+  function cumplePoliticaContrasena(valor) {
+    return /^(?=.*\p{Ll})(?=.*\p{Lu})(?=.*[0-9]).{8,}$/u.test(valor) && new TextEncoder().encode(valor).length <= 72;
+  }
+
   // ===== COMUNICACIÓN ASINCRÓNICA (fetch) =====
   // Todo lo que sigue habla con el servidor sin recargar la página: se manda el pedido con
   // fetch, el servidor (api/*.php) responde JSON y acá se actualiza solo la parte que cambió.
@@ -1042,7 +1048,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       ok = validarCampo(
         password, 'error-password',
-        (v) => v.length >= 8, 'La contraseña debe tener al menos 8 caracteres.'
+        cumplePoliticaContrasena, 'La contraseña debe tener entre 8 y 72 caracteres, con una mayúscula, una minúscula y un número.'
       ) && ok;
 
       ok = validarCampo(
@@ -1376,45 +1382,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ---- Formularios de configuración ----
-  const formContacto = document.querySelector('#formContacto');
-  if (formContacto) {
-    formContacto.addEventListener('submit', (evento) => {
-      evento.preventDefault();
-      if (!formContacto.checkValidity()) {
-        formContacto.reportValidity();
-        return;
-      }
-      // TODO (backend PHP): enviar correo/celular actualizados al servidor.
-      mostrarToast('Datos de contacto actualizados. (Conexión con el servidor pendiente)');
-    });
-  }
-
-  const formPassword = document.querySelector('#formPassword');
-  if (formPassword) {
-    formPassword.addEventListener('submit', (evento) => {
-      evento.preventDefault();
-
-      if (!formPassword.checkValidity()) {
-        formPassword.reportValidity();
-        return;
-      }
-
-      // El navegador no puede comparar dos campos entre sí con "pattern"; lo validamos a mano.
-      const nueva = document.querySelector('#pass-nueva');
-      const confirmar = document.querySelector('#pass-confirmar');
-      if (nueva.value !== confirmar.value) {
-        confirmar.setCustomValidity('Las contraseñas no coinciden.');
-        confirmar.reportValidity();
-        confirmar.addEventListener('input', () => confirmar.setCustomValidity(''), { once: true });
-        return;
-      }
-
-      // TODO (backend PHP): validar la contraseña actual contra la base y actualizar el hash.
-      mostrarToast('Contraseña actualizada. (Conexión con el servidor pendiente)');
-      formPassword.reset();
-    });
-  }
+  // (El cambio de contraseña y de datos de contacto del perfil se manda como formulario normal
+  // a perfil.php: lo valida y lo guarda el servidor, con la misma política de contraseñas.)
 
   // ===== TEMA VISUAL POR DEPORTE (ícono + color) =====
   // Un solo lugar con la "personalidad" de cada deporte. Cualquier elemento

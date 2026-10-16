@@ -42,7 +42,7 @@ $valores = $_POST ?? [];
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Registrarse — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=28" />
+  <link rel="stylesheet" href="styles.css?v=29" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -164,9 +164,9 @@ $valores = $_POST ?? [];
           <div class="form-group" id="group-password">
             <label class="form-label" for="password">Contraseña</label>
             <div class="input-password-wrap">
-              <input type="password" id="password" name="password" class="form-input" placeholder="Mínimo 8 caracteres" minlength="8" autocomplete="new-password" required/>
+              <input type="password" id="password" name="password" class="form-input" placeholder="Mínimo 8 caracteres" minlength="8" maxlength="72" pattern="(?=.*\p{Ll})(?=.*\p{Lu})(?=.*[0-9]).{8,}" title="Entre 8 y 72 caracteres, con una mayúscula, una minúscula y un número" autocomplete="new-password" required/>
             </div>
-            <span class="form-hint">Usá al menos 8 caracteres.</span>
+            <span class="form-hint">Entre 8 y 72 caracteres, con una mayúscula, una minúscula y un número.</span>
             <div class="password-strength" id="passwordStrength">
               <div class="strength-track">
                 <div class="strength-fill" id="strengthFill"></div>

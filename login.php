@@ -41,7 +41,7 @@ $vieneDeRegistro = isset($_GET['registrado']);
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Iniciar sesión — SGDM</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=28" />
+  <link rel="stylesheet" href="styles.css?v=29" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>

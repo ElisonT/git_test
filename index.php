@@ -36,7 +36,7 @@ $etiquetaFormatoPortada = ['liga' => 'Liga', 'eliminacion' => 'Eliminación dire
   <!-- title es el texto que aparece en la pestaña del navegador. -->
   <title>Sistema de Gestión Deportiva Modular</title>
   <!-- styles.css guarda todos los estilos visuales del sitio. -->
-  <link rel="stylesheet" href="styles.css?v=28" />
+  <link rel="stylesheet" href="styles.css?v=29" />
   <!-- Font Awesome aporta los iconos usados en botones, tarjetas y menus. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
@@ -64,16 +64,24 @@ $etiquetaFormatoPortada = ['liga' => 'Liga', 'eliminacion' => 'Eliminación dire
        HERO: primera seccion visible de la pagina de inicio.
        Presenta el objetivo del sistema y los botones principales.
        ===================== -->
-  <section class="hero">
-    <h1>Gestioná cualquier competencia desde un solo lugar</h1>
-    <p>Torneos deportivos, mentales y electrónicos. Liga, eliminación directa o sistema suizo.</p>
-    <div class="hero-actions">
-      <a href="busqueda.php" class="btn-primary btn-lg">Explorar torneos</a>
-      <?php if ($puedeCrearTorneo): ?>
-        <a href="crear-torneo.php" class="btn btn-lg">Crear torneo</a>
-      <?php else: ?>
-        <a href="busqueda.php" class="btn btn-lg">Unirse a torneos</a>
-      <?php endif; ?>
+  <section class="hero hero-con-imagen">
+    <div class="hero-texto">
+      <h1>Gestioná cualquier competencia desde un solo lugar</h1>
+      <p>Torneos deportivos, mentales y electrónicos. Liga, eliminación directa o sistema suizo.</p>
+      <div class="hero-actions">
+        <a href="busqueda.php" class="btn-primary btn-lg">Explorar torneos</a>
+        <?php if ($puedeCrearTorneo): ?>
+          <a href="crear-torneo.php" class="btn btn-lg">Crear torneo</a>
+        <?php else: ?>
+          <a href="busqueda.php" class="btn btn-lg">Unirse a torneos</a>
+        <?php endif; ?>
+      </div>
+    </div>
+    <!-- Ilustración propia (SVG): liviana, se ve nítida en cualquier pantalla y no depende de derechos de autor.
+         width/height evitan que la página "salte" mientras carga; alt describe la imagen para lectores de pantalla. -->
+    <div class="hero-imagen">
+      <img src="Imagenes/hero-torneo.svg" width="560" height="420" fetchpriority="high" decoding="async"
+           alt="Ilustración de un cuadro de torneo con cuatro participantes que avanza hasta un trofeo dorado sobre un podio" />
     </div>
   </section>
 
